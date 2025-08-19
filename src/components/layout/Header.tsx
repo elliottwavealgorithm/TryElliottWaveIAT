@@ -3,6 +3,7 @@ import { Bell, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { LanguageToggle } from "@/components/ui/language-toggle";
 
 const navItems = [
   { label: "Dashboard", to: "/" },
@@ -47,6 +48,7 @@ export const Header = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          <LanguageToggle />
           <Button variant="glass" size="icon" aria-label="Notifications">
             <Bell />
           </Button>

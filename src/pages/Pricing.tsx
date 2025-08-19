@@ -1,5 +1,6 @@
 import { Helmet } from "react-helmet-async";
 import AppLayout from "@/components/layout/AppLayout";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 

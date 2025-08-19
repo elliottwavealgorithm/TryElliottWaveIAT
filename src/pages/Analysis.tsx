@@ -2,32 +2,36 @@ import { Helmet } from "react-helmet-async";
 import AppLayout from "@/components/layout/AppLayout";
 import { WaveToolbar } from "@/components/analysis/WaveToolbar";
 import { AIPredictionsPanel } from "@/components/ai/AIPredictionsPanel";
+import { TradingViewPlaceholder } from "@/components/analysis/TradingViewPlaceholder";
+import { useTranslation } from "react-i18next";
 
 export default function Analysis() {
+  const { t } = useTranslation();
+  
   return (
     <AppLayout>
       <Helmet>
-        <title>Analysis Workspace – TryElliottWave</title>
-        <meta name="description" content="Workspace con gráficos avanzados, herramientas de ondas Elliott y predicciones de IA." />
+        <title>{t('analysis.title')}</title>
+        <meta name="description" content={t('analysis.description')} />
         <link rel="canonical" href="/analysis" />
       </Helmet>
 
       <main className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="relative lg:col-span-2">
-          <div className="relative rounded-lg border border-border glass-card">
-            <div id="tradingview_chart" className="w-full h-[520px] rounded-lg" />
+          <div className="relative">
+            <TradingViewPlaceholder />
             <WaveToolbar />
           </div>
         </section>
         <aside className="space-y-4">
           <AIPredictionsPanel />
           <div className="glass-card rounded-lg p-4">
-            <h3 className="font-semibold mb-2">Controls</h3>
+            <h3 className="font-semibold mb-2">{t('analysis.controls.title')}</h3>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>Symbol selector</li>
-              <li>Timeframe controls</li>
-              <li>Elliott Wave tools</li>
-              <li>Validation & export</li>
+              <li>{t('analysis.controls.symbolSelector')}</li>
+              <li>{t('analysis.controls.timeframeControls')}</li>
+              <li>{t('analysis.controls.elliottWaveTools')}</li>
+              <li>{t('analysis.controls.validationExport')}</li>
             </ul>
           </div>
         </aside>

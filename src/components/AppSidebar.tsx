@@ -11,16 +11,18 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-
-const items = [
-  { title: "Dashboard", url: "/", icon: Home },
-  { title: "Analysis", url: "/analysis", icon: ChartCandlestick },
-  { title: "Training", url: "/training", icon: Brain },
-  { title: "Pricing", url: "/pricing", icon: ShoppingBag },
-];
+import { useTranslation } from "react-i18next";
 
 export function AppSidebar() {
+  const { t } = useTranslation();
   const { state } = useSidebar();
+  
+  const items = [
+    { title: t('navigation.dashboard'), url: "/", icon: Home },
+    { title: t('navigation.analysis'), url: "/analysis", icon: ChartCandlestick },
+    { title: t('navigation.training'), url: "/training", icon: Brain },
+    { title: t('navigation.pricing'), url: "/pricing", icon: ShoppingBag },
+  ];
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
   const isExpanded = items.some((i) => isActive(i.url));
@@ -49,7 +51,7 @@ export function AppSidebar() {
                 <SidebarMenuButton asChild>
                   <a href="#upgrade" className="hover:bg-accent/60">
                     <Zap className="mr-2 h-4 w-4" />
-                    <span className="truncate">Upgrade</span>
+                    <span className="truncate">{t('navigation.upgrade')}</span>
                   </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>
