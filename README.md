@@ -1,73 +1,23 @@
-# Welcome to your Lovable project
+# Try Elliott Wave – Research MVP
 
-## Project info
+This repository contains the early-stage MVP of **TryElliottWave**, a research project exploring how traders draw and validate Elliott Wave structures. The system integrates with TradingView’s Advanced Charts library (requested) to capture user-created drawings and store them as structured data for research and potential machine learning applications.
 
-**URL**: https://lovable.dev/projects/62708311-be19-4ec3-bee6-e71350f51b13
+## Objectives
 
-## How can I edit this code?
+- Allow users to draw Elliott Waves and Fibonacci structures directly on charts.
+- Programmatically capture each drawing (anchor points, structure, timestamps).
+- Validate structures against Elliott Wave principles in real time.
+- Store datasets for research and potential ML/LLM training.
+- Provide a feedback engine to help students and traders improve their technical analysis.
 
-There are several ways of editing your application.
+## Status
 
-**Use Lovable**
+- MVP live at: [https://www.tryelliottwave.com](https://www.tryelliottwave.com)
+- Repository currently demonstrates core integration logic and storage workflow.
+- Project supported by **Instituto de Análisis Técnico Bursátil (IAT)** in Mexico, an educational partner of TradingView.
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/62708311-be19-4ec3-bee6-e71350f51b13) and start prompting.
+## Notes
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
-
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/62708311-be19-4ec3-bee6-e71350f51b13) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+- The project is currently for educational and research purposes, in collaboration with IAT (Instituto de Análisis Técnico Bursátil).
+- There is no trading execution or brokerage integration at this stage.
+- If validated successfully, the project could evolve into a public platform with commercial applications, in which case a proper commercial license from TradingView would be pursued.
