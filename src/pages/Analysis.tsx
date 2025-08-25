@@ -17,11 +17,9 @@ export default function Analysis() {
       </Helmet>
 
       <main className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <section className="relative lg:col-span-2">
-          <div className="relative">
-            <TradingViewPlaceholder />
-            <WaveToolbar />
-          </div>
+        <section className="lg:col-span-2 space-y-4">
+          <WaveToolbar />
+          <TradingViewPlaceholder />
         </section>
         <aside className="space-y-4">
           <AIPredictionsPanel />
