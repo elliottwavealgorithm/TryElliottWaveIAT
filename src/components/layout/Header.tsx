@@ -1,7 +1,6 @@
 import { NavLink } from "react-router-dom";
-import { Bell, Moon, Sun } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { LanguageToggle } from "@/components/ui/language-toggle";
 
@@ -13,13 +12,6 @@ const navItems = [
 ];
 
 export const Header = () => {
-  const [dark, setDark] = useState(true);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
 
   return (
     <header className="sticky top-0 z-20 border-b bg-background/70 backdrop-blur-md">
@@ -51,14 +43,6 @@ export const Header = () => {
           <LanguageToggle />
           <Button variant="glass" size="icon" aria-label="Notifications">
             <Bell />
-          </Button>
-          <Button
-            variant="glass"
-            size="icon"
-            aria-label="Theme toggle"
-            onClick={() => setDark((d) => !d)}
-          >
-            {dark ? <Sun /> : <Moon />}
           </Button>
           <div className="w-8 h-8 rounded-full bg-gradient-primary shadow-glow" aria-label="User avatar" />
         </div>
