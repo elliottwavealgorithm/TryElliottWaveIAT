@@ -8,56 +8,56 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Dark Neon Theme */
-    --background: 230 36% 7%;           /* #0B0D17 */
-    --foreground: 210 40% 96%;          /* near-white */
+    /* Clean Business Theme - Light */
+    --background: 0 0% 100%;            /* Pure white */
+    --foreground: 222 84% 4.9%;         /* Dark text */
 
-    --card: 227 23% 13%;                /* #1A1D29 */
-    --card-foreground: 210 40% 96%;
+    --card: 0 0% 100%;                  /* White cards */
+    --card-foreground: 222 84% 4.9%;
 
-    --popover: 227 23% 13%;
-    --popover-foreground: 210 40% 96%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 84% 4.9%;
 
-    /* Brand accents */
-    --primary: 191 100% 50%;            /* #00D4FF */
-    --primary-foreground: 230 36% 7%;   /* dark text on neon */
+    /* Brand accents - Professional blue */
+    --primary: 221 83% 53%;             /* #3B82F6 - Professional blue */
+    --primary-foreground: 210 40% 98%;  /* White text on blue */
 
-    --secondary: 262 83% 58%;           /* #7C3AED */
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;           /* Light gray */
+    --secondary-foreground: 222 84% 4.9%;
 
-    --muted: 223 18% 20%;
-    --muted-foreground: 215 20% 80%;
+    --muted: 210 40% 96%;               /* Very light gray */
+    --muted-foreground: 215 13.8% 34.1%; /* Medium gray text */
 
-    --accent: 223 18% 20%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 84% 4.9%;
 
-    --destructive: 0 84% 63%;           /* #EF4444 */
+    --destructive: 0 84% 60%;           /* Red for errors */
     --destructive-foreground: 210 40% 98%;
 
-    --success: 158 86% 47%;             /* #10B981 */
-    --warning: 36 92% 50%;              /* #F59E0B */
+    --success: 142 76% 36%;             /* Green for success */
+    --warning: 38 92% 50%;              /* Orange for warnings */
 
-    --border: 225 15% 20%;
-    --input: 225 15% 20%;
-    --ring: 191 100% 50%;               /* brand ring */
+    --border: 214 32% 91%;              /* Light border */
+    --input: 214 32% 91%;               /* Light input bg */
+    --ring: 221 83% 53%;                /* Blue focus ring */
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
     /* Sidebar */
-    --sidebar-background: 227 23% 13%;
-    --sidebar-foreground: 210 40% 96%;
-    --sidebar-primary: 191 100% 50%;
-    --sidebar-primary-foreground: 230 36% 7%;
-    --sidebar-accent: 223 18% 20%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 225 15% 20%;
-    --sidebar-ring: 191 100% 50%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 84% 4.9%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 210 40% 98%;
+    --sidebar-accent: 210 40% 96%;
+    --sidebar-accent-foreground: 222 84% 4.9%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 221 83% 53%;
 
-    /* Signature gradients & shadows */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--primary)));
-    --gradient-surface: linear-gradient(180deg, hsl(var(--card) / 0.9), hsl(var(--card) / 0.7));
-    --shadow-elevated: 0 10px 30px -10px hsl(var(--primary) / 0.25);
-    --shadow-glow: 0 0 24px hsl(var(--primary) / 0.5), 0 0 48px hsl(var(--secondary) / 0.3);
+    /* Clean gradients & shadows */
+    --gradient-primary: linear-gradient(135deg, hsl(221 83% 53%), hsl(221 83% 63%));
+    --gradient-surface: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
+    --shadow-elevated: 0 4px 12px -4px hsl(221 83% 53% / 0.15);
+    --shadow-glow: 0 2px 8px hsl(221 83% 53% / 0.15);
   }
 
   .dark {
@@ -129,8 +129,12 @@ All colors MUST be HSL.
   .bg-gradient-surface {
     background-image: var(--gradient-surface);
   }
+  .clean-card {
+    @apply bg-card border border-border rounded-lg;
+    box-shadow: var(--shadow-elevated);
+  }
   .glass-card {
-    @apply backdrop-blur-md bg-card/60 border border-border/60;
+    @apply bg-card border border-border rounded-lg;
     box-shadow: var(--shadow-elevated);
   }
   .text-gradient-brand {

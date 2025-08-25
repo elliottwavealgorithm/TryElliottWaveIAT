@@ -10,23 +10,23 @@ interface PredictionCardProps {
 
 export function PredictionCard({ symbol, waveCount, target, confidence, timeframe }: PredictionCardProps) {
   return (
-    <Card className="glass-card">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between text-base">
-          <span>{symbol}</span>
-          <span className="text-xs text-muted-foreground">{timeframe}</span>
+    <Card className="clean-card hover:shadow-lg transition-shadow">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center justify-between">
+          <span className="text-lg font-bold text-primary">{symbol}</span>
+          <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded">{timeframe}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-0 space-y-2">
-        <div className="text-sm text-muted-foreground">{waveCount}</div>
-        <div className="flex items-center justify-between">
+      <CardContent className="space-y-4">
+        <div className="text-sm text-muted-foreground font-medium">{waveCount}</div>
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <div className="text-xs text-muted-foreground">Target</div>
-            <div className="font-semibold">{target}</div>
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Target</div>
+            <div className="font-bold text-foreground">{target}</div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">Confidence</div>
-            <div className="font-semibold">{confidence}</div>
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Confidence</div>
+            <div className="font-bold text-success">{confidence}</div>
           </div>
         </div>
       </CardContent>
