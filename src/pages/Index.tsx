@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, TrendingUp, Plus, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { ElliottWaveChart } from "@/components/charts/ElliottWaveChart";
+import { AdvancedElliottWaveChart } from "@/components/charts/AdvancedElliottWaveChart";
 
 interface StockAnalysis {
   symbol: string;
@@ -254,7 +254,7 @@ export default function Index() {
                               {stock.analysis}
                             </pre>
                             {stock.chartData && (
-                              <ElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
+                              <AdvancedElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
                             )}
                           </div>
                         ) : (
