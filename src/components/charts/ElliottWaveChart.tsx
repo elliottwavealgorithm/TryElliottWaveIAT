@@ -25,24 +25,29 @@ interface ElliottWaveChartProps {
 export function ElliottWaveChart({ data, symbol }: ElliottWaveChartProps) {
   if (!data?.waves) return null;
 
-  // Convert wave data to chart format
-  const chartData = data.waves.flatMap((wave, index) => [
-    {
+  // Convert wave data to chart format - create a continuous line
+  const chartData: any[] = [];
+  
+  data.waves.forEach((wave, index) => {
+    // Add start point
+    chartData.push({
       date: wave.start_date,
       price: wave.start_price,
       wave: wave.wave,
-      point: 'start'
-    },
-    {
+      label: `Wave ${wave.wave} Start`
+    });
+    
+    // Add end point
+    chartData.push({
       date: wave.end_date,
       price: wave.end_price,
       wave: wave.wave,
-      point: 'end'
-    }
-  ]);
+      label: `Wave ${wave.wave} End`
+    });
+  });
 
-  const minPrice = Math.min(...chartData.map(d => d.price)) * 0.95;
-  const maxPrice = Math.max(...chartData.map(d => d.price)) * 1.05;
+  const minPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.price)) * 0.95 : 0;
+  const maxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.price)) * 1.05 : 100;
 
   return (
     <div className="w-full h-64 mt-4">
@@ -64,7 +69,7 @@ export function ElliottWaveChart({ data, symbol }: ElliottWaveChartProps) {
           />
           <Tooltip 
             labelFormatter={(label) => `Fecha: ${label}`}
-            formatter={(value: any, name) => [`$${value}`, name === 'price' ? 'Precio' : name]}
+            formatter={(value: any, name) => [`$${Number(value).toFixed(2)}`, name === 'price' ? 'Precio' : name]}
           />
           <Line 
             type="monotone" 
@@ -79,9 +84,9 @@ export function ElliottWaveChart({ data, symbol }: ElliottWaveChartProps) {
       {/* Key Levels Legend */}
       <div className="mt-2 text-xs text-muted-foreground">
         <div className="flex gap-4">
-          <span>📈 Resistencia: ${data.key_levels.resistance.join(', ')}</span>
-          <span>📉 Soporte: ${data.key_levels.support.join(', ')}</span>
-          <span>❌ Invalidación: ${data.key_levels.invalidation}</span>
+          <span>📈 Resistencia: ${data.key_levels.resistance?.join(', ') || 'N/A'}</span>
+          <span>📉 Soporte: ${data.key_levels.support?.join(', ') || 'N/A'}</span>
+          <span>❌ Invalidación: ${data.key_levels.invalidation || 'N/A'}</span>
         </div>
       </div>
     </div>
