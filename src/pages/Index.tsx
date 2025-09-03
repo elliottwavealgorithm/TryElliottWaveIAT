@@ -152,10 +152,10 @@ export default function Index() {
           <div className="text-center mb-12">
             <div className="flex items-center justify-center gap-2 mb-4">
               <TrendingUp className="h-8 w-8 text-primary" />
-              <h1 className="text-4xl font-bold text-foreground">Elliott Wave Pro</h1>
+              <h1 className="text-4xl font-bold text-foreground">Impulse Analytics</h1>
             </div>
             <p className="text-xl text-muted-foreground">
-              Análisis profesional de portafolio con Teoría de Ondas de Elliott + TradingView
+              Análisis inteligente de portafolio con Ondas de Elliott + IA
             </p>
           </div>
 
