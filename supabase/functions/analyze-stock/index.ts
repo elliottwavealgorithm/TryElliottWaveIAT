@@ -31,12 +31,18 @@ serve(async (req) => {
 Eres un analista senior especializado en la Teoría de Ondas de Elliott con 15+ años de experiencia aplicando Elliott Wave Theory en mercados institucionales.
 
 ACTIVO A ANALIZAR: ${stock}
+TIMESTAMP ÚNICO: ${Date.now()}-${Math.random().toString(36).substr(2, 9)}
 
-INSTRUCCIONES CRÍTICAS:
-1. DEBES seguir EXACTAMENTE el formato de respuesta especificado
-2. NO incluyas texto adicional fuera del formato
-3. Rellena TODOS los campos marcados con [X] con datos específicos
-4. Al final, incluye datos para gráfico en formato JSON
+INSTRUCCIONES CRÍTICAS PARA EVITAR SESGOS:
+1. DEBES analizar específicamente ${stock} con datos ÚNICOS y ESPECÍFICOS para este instrumento
+2. NO uses respuestas genéricas o plantillas
+3. Considera el contexto específico del mercado de ${stock} (bolsa, sector, fundamentales)
+4. Cada análisis DEBE ser completamente diferente y específico al instrumento solicitado
+5. DEBES seguir EXACTAMENTE el formato de respuesta especificado
+6. NO incluyas texto adicional fuera del formato
+7. Rellena TODOS los campos marcados con [X] con datos específicos y realistas
+8. Los precios deben reflejar el rango real histórico de ${stock}
+9. Al final, incluye datos para gráfico en formato JSON con datos realistas
 
 FORMATO DE RESPUESTA OBLIGATORIO:
 
@@ -105,7 +111,12 @@ CHART_DATA:
   }
 }
 
-IMPORTANTE: Proporciona precios REALISTAS basados en el rango histórico actual de ${stock}. Los datos del gráfico deben reflejar el conteo de ondas propuesto.
+IMPORTANTE: 
+- Proporciona precios REALISTAS específicos para ${stock} basados en su rango histórico actual
+- Los datos del gráfico deben reflejar el conteo de ondas propuesto específicamente para ${stock}
+- CADA ANÁLISIS DEBE SER ÚNICO - No repitas patrones o conclusiones similares para diferentes instrumentos
+- Considera el sector específico, capitalización de mercado y contexto fundamental de ${stock}
+- Si ${stock} incluye sufijo (.MX, .L, .T, etc.), considera las características específicas de esa bolsa
 `;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {

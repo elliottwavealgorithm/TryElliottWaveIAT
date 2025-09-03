@@ -5,16 +5,22 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, TrendingUp, Plus, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { AdvancedElliottWaveChart } from "@/components/charts/AdvancedElliottWaveChart";
+import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
+import { InstrumentSelector } from "@/components/instrument/InstrumentSelector";
+import { BrokerConnection } from "@/components/broker/BrokerConnection";
+import { RecommendationsDashboard } from "@/components/dashboard/RecommendationsDashboard";
 
 interface StockAnalysis {
   symbol: string;
   analysis: string;
   loading: boolean;
   chartData?: any;
+  exchange?: string;
 }
 
 export default function Index() {
@@ -51,6 +57,31 @@ export default function Index() {
 
     setPortfolio(prev => [...prev, newStock]);
     setStockInput("");
+  };
+
+  const addInstrument = (symbol: string, exchange: string) => {
+    if (portfolio.some(stock => stock.symbol === symbol)) {
+      toast({
+        title: "Error",
+        description: "Este instrumento ya está en tu portafolio",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newStock: StockAnalysis = {
+      symbol,
+      analysis: "",
+      loading: false,
+      exchange
+    };
+
+    setPortfolio(prev => [...prev, newStock]);
+    
+    toast({
+      title: "Instrumento agregado",
+      description: `${symbol} de ${exchange} agregado al portafolio`,
+    });
   };
 
   const removeStock = (symbol: string) => {
@@ -116,26 +147,37 @@ export default function Index() {
       </Helmet>
 
       <div className="min-h-screen bg-background">
-        <main className="container mx-auto px-4 py-12 max-w-6xl">
+        <main className="container mx-auto px-4 py-12 max-w-7xl">
           {/* Header */}
           <div className="text-center mb-12">
             <div className="flex items-center justify-center gap-2 mb-4">
               <TrendingUp className="h-8 w-8 text-primary" />
-              <h1 className="text-4xl font-bold text-foreground">Elliott</h1>
+              <h1 className="text-4xl font-bold text-foreground">Elliott Wave Pro</h1>
             </div>
             <p className="text-xl text-muted-foreground">
-              Análisis profesional de portafolio con Teoría de Ondas de Elliott
+              Análisis profesional de portafolio con Teoría de Ondas de Elliott + TradingView
             </p>
           </div>
 
-          <div className="grid gap-8 lg:grid-cols-3">
+          <Tabs defaultValue="analysis" className="space-y-6">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="analysis">Análisis</TabsTrigger>
+              <TabsTrigger value="recommendations">Recomendaciones IA</TabsTrigger>
+              <TabsTrigger value="broker">Broker</TabsTrigger>
+              <TabsTrigger value="settings">Configuración</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="analysis">
+              <div className="grid gap-8 lg:grid-cols-3">
             {/* Portfolio Management */}
-            <div className="lg:col-span-1">
+            <div className="lg:col-span-1 space-y-6">
+              <InstrumentSelector onAddInstrument={addInstrument} />
+              
               <Card className="clean-card">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp className="h-5 w-5" />
-                    Gestión de Portafolio
+                    Portafolio Rápido
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -173,6 +215,7 @@ export default function Index() {
                         <div key={stock.symbol} className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
                           <div className="flex items-center gap-2">
                             <Badge variant="outline">{stock.symbol}</Badge>
+                            {stock.exchange && <Badge variant="secondary" className="text-xs">{stock.exchange}</Badge>}
                             {stock.analysis && <Badge variant="default" className="text-xs">✓</Badge>}
                           </div>
                           <div className="flex items-center gap-1">
@@ -250,12 +293,25 @@ export default function Index() {
                           </div>
                         ) : stock.analysis ? (
                           <div className="prose prose-sm max-w-none">
-                            <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground bg-muted/50 p-4 rounded-lg border">
-                              {stock.analysis}
-                            </pre>
-                            {stock.chartData && (
-                              <AdvancedElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
-                            )}
+                            <div className="space-y-6">
+                              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground bg-muted/50 p-4 rounded-lg border">
+                                {stock.analysis}
+                              </pre>
+                              
+                              <div className="grid gap-6 lg:grid-cols-2">
+                                {stock.chartData && (
+                                  <div>
+                                    <h4 className="text-sm font-medium mb-3">Análisis Elliott Wave</h4>
+                                    <AdvancedElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
+                                  </div>
+                                )}
+                                
+                                <div>
+                                  <h4 className="text-sm font-medium mb-3">Gráfico TradingView</h4>
+                                  <TradingViewWidget symbol={stock.symbol} height={300} />
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
@@ -270,6 +326,51 @@ export default function Index() {
               </div>
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="recommendations">
+          <RecommendationsDashboard />
+        </TabsContent>
+
+        <TabsContent value="broker">
+          <BrokerConnection />
+        </TabsContent>
+
+        <TabsContent value="settings">
+          <Card className="clean-card">
+            <CardHeader>
+              <CardTitle>Configuración del LLM</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <h4 className="font-medium mb-2">Prompt Engineering Actual</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  El sistema utiliza un prompt especializado que incluye identificadores únicos 
+                  por instrumento para evitar respuestas sesgadas. Cada análisis considera:
+                </p>
+                <ul className="text-sm space-y-1 text-muted-foreground">
+                  <li>• Timestamp único para cada consulta</li>
+                  <li>• Contexto específico del mercado/bolsa</li>
+                  <li>• Rango de precios histórico real</li>
+                  <li>• Fundamentales del sector específico</li>
+                  <li>• Validación anti-sesgo automática</li>
+                </ul>
+              </div>
+              
+              <div className="p-4 bg-primary/10 border border-primary/20 rounded-lg">
+                <h4 className="font-medium text-primary mb-2">Mejoras Implementadas</h4>
+                <ul className="text-sm space-y-1">
+                  <li>✅ Selección específica de bolsa/exchange</li>
+                  <li>✅ Widget TradingView integrado</li>
+                  <li>✅ Prompt anti-sesgo mejorado</li>
+                  <li>✅ Dashboard de recomendaciones IA</li>
+                  <li>✅ Conexión a brokers</li>
+                </ul>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
         </main>
       </div>
     </>
