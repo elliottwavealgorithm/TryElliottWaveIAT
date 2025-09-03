@@ -160,11 +160,10 @@ export default function Index() {
           </div>
 
           <Tabs defaultValue="analysis" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="analysis">Análisis</TabsTrigger>
               <TabsTrigger value="recommendations">Recomendaciones IA</TabsTrigger>
               <TabsTrigger value="broker">Broker</TabsTrigger>
-              <TabsTrigger value="settings">Configuración</TabsTrigger>
             </TabsList>
 
             <TabsContent value="analysis">
@@ -292,27 +291,20 @@ export default function Index() {
                             </div>
                           </div>
                         ) : stock.analysis ? (
-                          <div className="prose prose-sm max-w-none">
-                            <div className="space-y-6">
-                              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground bg-muted/50 p-4 rounded-lg border">
-                                {stock.analysis}
-                              </pre>
-                              
-                              <div className="grid gap-6 lg:grid-cols-2">
-                                {stock.chartData && (
-                                  <div>
-                                    <h4 className="text-sm font-medium mb-3">Análisis Elliott Wave</h4>
-                                    <AdvancedElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
-                                  </div>
-                                )}
-                                
-                                <div>
-                                  <h4 className="text-sm font-medium mb-3">Gráfico TradingView</h4>
-                                  <TradingViewWidget symbol={stock.symbol} height={300} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                           <div className="prose prose-sm max-w-none">
+                             <div className="space-y-6">
+                               <pre className="whitespace-pre-wrap text-sm leading-relaxed text-foreground bg-muted/50 p-4 rounded-lg border">
+                                 {stock.analysis}
+                               </pre>
+                               
+                               {stock.chartData && (
+                                 <div>
+                                   <h4 className="text-sm font-medium mb-3">Análisis Elliott Wave</h4>
+                                   <AdvancedElliottWaveChart data={stock.chartData} symbol={stock.symbol} />
+                                 </div>
+                               )}
+                             </div>
+                           </div>
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
                             <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-30" />
@@ -326,6 +318,26 @@ export default function Index() {
               </div>
             </div>
           </div>
+          
+          {/* TradingView Widget - Full Width */}
+          {portfolio.length > 0 && (
+            <div className="mt-8">
+              <Card className="clean-card">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5" />
+                    Gráfico TradingView
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TradingViewWidget 
+                    symbol={portfolio[portfolio.length - 1].symbol} 
+                    height={600} 
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="recommendations">
@@ -336,40 +348,6 @@ export default function Index() {
           <BrokerConnection />
         </TabsContent>
 
-        <TabsContent value="settings">
-          <Card className="clean-card">
-            <CardHeader>
-              <CardTitle>Configuración del LLM</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-4 bg-muted/50 rounded-lg">
-                <h4 className="font-medium mb-2">Prompt Engineering Actual</h4>
-                <p className="text-sm text-muted-foreground mb-4">
-                  El sistema utiliza un prompt especializado que incluye identificadores únicos 
-                  por instrumento para evitar respuestas sesgadas. Cada análisis considera:
-                </p>
-                <ul className="text-sm space-y-1 text-muted-foreground">
-                  <li>• Timestamp único para cada consulta</li>
-                  <li>• Contexto específico del mercado/bolsa</li>
-                  <li>• Rango de precios histórico real</li>
-                  <li>• Fundamentales del sector específico</li>
-                  <li>• Validación anti-sesgo automática</li>
-                </ul>
-              </div>
-              
-              <div className="p-4 bg-primary/10 border border-primary/20 rounded-lg">
-                <h4 className="font-medium text-primary mb-2">Mejoras Implementadas</h4>
-                <ul className="text-sm space-y-1">
-                  <li>✅ Selección específica de bolsa/exchange</li>
-                  <li>✅ Widget TradingView integrado</li>
-                  <li>✅ Prompt anti-sesgo mejorado</li>
-                  <li>✅ Dashboard de recomendaciones IA</li>
-                  <li>✅ Conexión a brokers</li>
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
         </main>
       </div>
