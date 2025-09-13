@@ -231,9 +231,9 @@ export function InstrumentSelector({ onAddInstrument }: InstrumentSelectorProps)
                     </SelectItem>
                   ))}
                   {filteredSymbols.length === 0 && !isLoadingSymbols && (
-                    <SelectItem value="" disabled>
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
                       No se encontraron instrumentos
-                    </SelectItem>
+                    </div>
                   )}
                 </SelectContent>
               </Select>
