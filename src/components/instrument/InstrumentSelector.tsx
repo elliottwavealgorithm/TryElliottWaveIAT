@@ -217,7 +217,9 @@ export function InstrumentSelector({ onAddInstrument }: InstrumentSelectorProps)
                   <SelectValue placeholder={isLoadingSymbols ? "Cargando..." : "Selecciona un instrumento"} />
                 </SelectTrigger>
                 <SelectContent className="max-h-[300px]">
-                  {filteredSymbols.map((symbol) => (
+                  {filteredSymbols
+                    .filter(symbol => symbol.symbol && symbol.symbol.trim() !== '')
+                    .map((symbol) => (
                     <SelectItem key={symbol.symbol} value={symbol.symbol}>
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
