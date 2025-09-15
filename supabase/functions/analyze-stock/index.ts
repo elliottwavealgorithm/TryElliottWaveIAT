@@ -28,81 +28,69 @@ serve(async (req) => {
     }
 
     const prompt = `
-Eres un analista senior especializado en la Teoría de Ondas de Elliott con 15+ años de experiencia aplicando Elliott Wave Theory en mercados institucionales.
+INSTRUCCIONES PARA EL ANALISTA ELLIOTT WAVE:
 
-ACTIVO A ANALIZAR: ${stock}
-TIMESTAMP ÚNICO: ${Date.now()}-${Math.random().toString(36).substr(2, 9)}
+Eres un analista técnico senior especializado en Elliott Wave Theory. Debes proporcionar un análisis OBJETIVO y VARIADO del instrumento ${stock}.
 
-INSTRUCCIONES CRÍTICAS PARA EVITAR SESGOS:
-1. DEBES analizar específicamente ${stock} con datos ÚNICOS y ESPECÍFICOS para este instrumento
-2. NO uses respuestas genéricas o plantillas
-3. Considera el contexto específico del mercado de ${stock} (bolsa, sector, fundamentales)
-4. Cada análisis DEBE ser completamente diferente y específico al instrumento solicitado
-5. DEBES seguir EXACTAMENTE el formato de respuesta especificado
-6. NO incluyas texto adicional fuera del formato
-7. Rellena TODOS los campos marcados con [X] con datos específicos y realistas
-8. Los precios deben reflejar el rango real histórico de ${stock}
-9. Al final, incluye datos para gráfico en formato JSON con datos realistas
+IMPORTANTE - EVITA SESGOS:
+- NO asumas automáticamente que está en Onda 5
+- Analiza REALMENTE las estructuras de precio actuales  
+- Considera TODOS los escenarios posibles (ondas 1, 2, 3, 4, 5, A, B, C)
+- Varía tus conclusiones entre diferentes instrumentos
+- Usa datos de precio REALISTAS para ${stock}
 
-FORMATO DE RESPUESTA OBLIGATORIO:
+CONTEXTO DEL INSTRUMENTO: ${stock}
+Fecha de análisis: ${new Date().toLocaleDateString()}
+ID único: ${Date.now()}-${Math.random().toString(36).substr(2, 9)}
 
-ANÁLISIS ELLIOTT WAVE - ${stock} - ${new Date().toLocaleDateString()}
+ANÁLISIS REQUERIDO:
 
-🌊 CONTEO PRINCIPAL (Probabilidad: X%)
-- Estructura: [Impulsiva/Correctiva/WXY/Triángulo/Cuña]
-- Posición actual: Onda [X] de grado [Y]
-- Objetivo inmediato: $[precio]
-- Invalidación: $[precio]
+🌊 CONTEO PRINCIPAL
+- Estructura actual: [Describe objetivamente]
+- Posición en el ciclo: [Onda específica y grado]
+- Probabilidad de escenario: [%]
+- Invalidación crítica: $[precio]
 
-🏗️ CANALIZACIONES ACTIVAS
-- Canal principal: [2-4/0-2/5-B]
-- Proyección por ruptura: $[precio]
-- Confirmación de grado superior: [SÍ/NO]
+📈 NIVELES TÉCNICOS
+- Soporte clave: $[precio]
+- Resistencia inmediata: $[precio]
+- Objetivo proyectado: $[precio]
 
-💡 FUNDAMENTACIÓN
-**¿Por qué creo en esta hipótesis?**
-- [Explicación detallada de evidencias técnicas]
-- [Price action que confirma el conteo]
-- [Contexto macro relevante]
+🔍 ANÁLISIS ESTRUCTURAL
+**Evidencias técnicas observadas:**
+- [Describe patrones específicos reales]
+- [Retrocesos de Fibonacci relevantes]
+- [Momentum y divergencias]
 
 📊 ESCENARIOS ALTERNATIVOS
-1. **Escenario A** (Probabilidad: X%)
-   - Estructura alternativa: [descripción]
+1. **Escenario Alcista** ([%]% probabilidad)
+   - Descripción: [estructura]
    - Invalidación: $[precio]
-   - Fundamentación: [por qué es posible]
 
-2. **Escenario B** (Probabilidad: X%)
-   - Estructura alternativa: [descripción]
+2. **Escenario Bajista** ([%]% probabilidad) 
+   - Descripción: [estructura]
    - Invalidación: $[precio]
-   - Fundamentación: [por qué es posible]
 
-🎯 POTENCIAL ONDA 3 [Solo si aplica]
-- ¿Está en Wave 3?: [SÍ/NO]
-- Grado de la Wave 3: [Mayor/Intermedia/Menor]
-- Extensión esperada: [1.618/2.618/4.236] de Wave 1
-- % completado estimado: X%
-
-💰 RECOMENDACIÓN OPERATIVA
-- Acción: [COMPRAR/VENDER/ESPERAR]
-- Entrada: $[precio]
-- Stop Loss: $[precio]
+💡 RECOMENDACIÓN
+- Sesgo direccional: [ALCISTA/BAJISTA/NEUTRAL]
+- Nivel de entrada: $[precio]
+- Stop loss: $[precio]
 - Objetivo: $[precio]
-- Tamaño posición: X% del capital
-- Prioridad: [ALTA/MEDIA/BAJA] basada en Wave 3
+- Horizonte temporal: [corto/medio/largo plazo]
 
-🎯 CONTEXTO MACRO
-- Fase del ciclo mayor
-- Confluencias técnicas
-- Factores fundamentales relevantes
+IMPORTANTE:
+- Sé OBJETIVO en tu análisis
+- No repitas el mismo patrón para todos los instrumentos
+- Considera el contexto específico de mercado para ${stock}
+- Varía entre ondas impulsivas y correctivas según corresponda
+- Usa precios REALISTAS basados en el rango histórico del instrumento
 
 CHART_DATA:
 {
   "waves": [
     {"wave": "1", "start_price": 100, "end_price": 120, "start_date": "2024-01-01", "end_date": "2024-02-01"},
     {"wave": "2", "start_price": 120, "end_price": 110, "start_date": "2024-02-01", "end_date": "2024-02-15"},
-    {"wave": "3", "start_price": 110, "end_price": 150, "start_date": "2024-02-15", "end_date": "2024-03-15"},
-    {"wave": "4", "start_price": 150, "end_price": 140, "start_date": "2024-03-15", "end_date": "2024-04-01"},
-    {"wave": "5", "start_price": 140, "end_price": 160, "start_date": "2024-04-01", "end_date": "2024-04-15"}
+    {"wave": "3", "start_price": 110, "end_price": 150, "start_date": "2024-02-15", "end_date": "2024-03-15"}
   ],
   "key_levels": {
     "support": [110, 140],
@@ -110,13 +98,6 @@ CHART_DATA:
     "invalidation": 105
   }
 }
-
-IMPORTANTE: 
-- Proporciona precios REALISTAS específicos para ${stock} basados en su rango histórico actual
-- Los datos del gráfico deben reflejar el conteo de ondas propuesto específicamente para ${stock}
-- CADA ANÁLISIS DEBE SER ÚNICO - No repitas patrones o conclusiones similares para diferentes instrumentos
-- Considera el sector específico, capitalización de mercado y contexto fundamental de ${stock}
-- Si ${stock} incluye sufijo (.MX, .L, .T, etc.), considera las características específicas de esa bolsa
 `;
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
