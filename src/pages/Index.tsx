@@ -68,9 +68,22 @@ export default function Index() {
       console.error('Error:', error);
       setSelectedStock(prev => prev ? { ...prev, loading: false } : null);
       
+      // Get more specific error message based on the error type
+      let errorMessage = `Error al generar el análisis de ${selectedStock.symbol}.`;
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Too Many Requests') || error.message.includes('429')) {
+          errorMessage = 'Demasiadas solicitudes. Por favor, espera unos minutos antes de intentar nuevamente.';
+        } else if (error.message.includes('connecting to AI service')) {
+          errorMessage = 'Error de conexión con el servicio de IA. Inténtalo más tarde.';
+        } else if (error.message.includes('Non-2xx status code')) {
+          errorMessage = 'Error del servidor. Por favor, inténtalo más tarde.';
+        }
+      }
+      
       toast({
         title: "Error",
-        description: `Error al generar el análisis de ${selectedStock.symbol}. Verifica que el símbolo sea correcto.`,
+        description: errorMessage,
         variant: "destructive",
       });
     }

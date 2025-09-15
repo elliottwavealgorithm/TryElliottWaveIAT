@@ -121,10 +121,20 @@ CHART_DATA:
 
     if (!response.ok) {
       console.error('OpenAI API error:', response.status, response.statusText);
+      
+      let errorMessage = 'Error connecting to AI service';
+      if (response.status === 429) {
+        errorMessage = 'Too Many Requests - Rate limit exceeded';
+      } else if (response.status === 401) {
+        errorMessage = 'Invalid API key';
+      } else if (response.status >= 500) {
+        errorMessage = 'OpenAI service temporarily unavailable';
+      }
+      
       return new Response(
-        JSON.stringify({ error: 'Error connecting to AI service' }),
+        JSON.stringify({ error: errorMessage }),
         { 
-          status: 500,
+          status: response.status,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         }
       );
