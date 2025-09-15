@@ -15,6 +15,16 @@ serve(async (req) => {
   }
 
   try {
+    if (!openAIApiKey) {
+      return new Response(
+        JSON.stringify({ error: 'OpenAI API key not configured' }),
+        { 
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
     const { stock, question } = await req.json();
 
     if (!stock || !question) {
@@ -120,19 +130,22 @@ CHART_DATA:
     });
 
     if (!response.ok) {
-      console.error('OpenAI API error:', response.status, response.statusText);
+      const errorText = await response.text();
+      console.error('OpenAI API error:', response.status, response.statusText, errorText);
       
       let errorMessage = 'Error connecting to AI service';
       if (response.status === 429) {
-        errorMessage = 'Too Many Requests - Rate limit exceeded';
+        errorMessage = 'Too Many Requests - Rate limit exceeded. Please wait a few minutes and try again.';
       } else if (response.status === 401) {
-        errorMessage = 'Invalid API key';
+        errorMessage = 'Invalid API key - Please check OpenAI configuration';
+      } else if (response.status === 400) {
+        errorMessage = 'Bad request - Please check the symbol format';
       } else if (response.status >= 500) {
         errorMessage = 'OpenAI service temporarily unavailable';
       }
       
       return new Response(
-        JSON.stringify({ error: errorMessage }),
+        JSON.stringify({ error: errorMessage, details: errorText }),
         { 
           status: response.status,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
