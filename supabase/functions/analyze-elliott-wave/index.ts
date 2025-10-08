@@ -133,8 +133,8 @@ Formato JSON requerido:
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `Pivots data:\n\n${pivotsText}\n\nReturn only JSON per schema.` }
           ],
-          temperature: 0.08,
-          max_completion_tokens: 1000,
+          temperature: 0.1,
+          max_completion_tokens: 2500,
         }),
       });
 
@@ -154,17 +154,25 @@ Formato JSON requerido:
       }
 
       const data = await response.json();
-      const content = data.choices?.[0]?.message?.content || '';
+      let content = data.choices?.[0]?.message?.content || '';
       
-      console.log('LLM Response:', content.substring(0, 200));
+      console.log('LLM Response (first 300 chars):', content.substring(0, 300));
+      console.log('LLM Response (last 300 chars):', content.substring(content.length - 300));
+      
+      // Remove markdown code blocks if present
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '');
       
       // Try to extract JSON from response
       const jsonStart = content.indexOf('{');
-      if (jsonStart === -1) {
-        throw new Error('No JSON found in LLM response');
+      const jsonEnd = content.lastIndexOf('}');
+      
+      if (jsonStart === -1 || jsonEnd === -1) {
+        throw new Error('No valid JSON found in LLM response');
       }
       
-      const jsonText = content.slice(jsonStart);
+      const jsonText = content.slice(jsonStart, jsonEnd + 1);
+      console.log('Extracted JSON length:', jsonText.length);
+      
       const report = JSON.parse(jsonText);
       
       if (validateReport(report)) {
