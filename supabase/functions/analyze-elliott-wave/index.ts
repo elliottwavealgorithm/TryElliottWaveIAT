@@ -78,18 +78,34 @@ function pivotsToText(symbol: string, timeframe: string, history: any[], pivots:
   return text;
 }
 
-// Validate Elliott Wave Report JSON
+// Validate Elliott Wave Report JSON (new format)
 function validateReport(report: any): boolean {
-  if (!report || !report.simbolo || !Array.isArray(report.conteos)) return false;
+  if (!report || !report.symbol || !report.timeframe) return false;
   
-  for (const c of report.conteos) {
-    if (!Array.isArray(c.ondas) || c.ondas.length === 0) return false;
-    for (const o of c.ondas) {
-      if (typeof o.n !== 'number' || !o.inicio || !o.fin || typeof o.precio_inicio !== 'number') {
+  // Validate historical_low if present
+  if (report.historical_low) {
+    if (typeof report.historical_low.price !== 'number' || !report.historical_low.date) {
+      return false;
+    }
+  }
+  
+  // Validate supercycle array
+  if (!Array.isArray(report.supercycle) || report.supercycle.length === 0) return false;
+  
+  for (const wave of report.supercycle) {
+    if (typeof wave.wave !== 'number') return false;
+    
+    // Only validate complete waves (not in_progress or pending)
+    if (wave.status !== 'in_progress' && wave.status !== 'pending') {
+      if (typeof wave.start !== 'number' || typeof wave.end !== 'number') {
+        return false;
+      }
+      if (!wave.date_start || !wave.date_end) {
         return false;
       }
     }
   }
+  
   return true;
 }
 
