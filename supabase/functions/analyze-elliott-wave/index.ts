@@ -95,29 +95,57 @@ function validateReport(report: any): boolean {
 
 // Call LLM for Elliott Wave Count
 async function callLLMForCount(pivotsText: string, symbol: string, timeframe: string, maxRetries = 2) {
-  const systemPrompt = `Eres un analista experto en Teoría de Ondas de Elliott. SOLO RESPONDE CON JSON VÁLIDO según el schema provisto. No escribas explicaciones. Usa exclusivamente los pivotes que te doy. No inventes pivotes ni dates. No incluyas análisis narrativos en esta llamada. Si hay ambigüedad, incluye dos conteos en el array "conteos" con un campo "confidence".
+  const systemPrompt = `Eres un analista técnico experto en la Teoría de Ondas de Elliott. Tu tarea es analizar series de precios históricas completas de una acción, comenzando siempre desde el mínimo histórico disponible en los datos, y construir conteos de ondas válidos según las reglas formales de Elliott Wave.
 
-Formato JSON requerido:
+⚙️ INSTRUCCIONES DE ANÁLISIS
+
+1. Identifica el mínimo histórico (low más antiguo) y úsalo como punto inicial (onda 0 o punto de origen del conteo).
+2. Construye el conteo completo en grados:
+   - Supercycle
+   - Cycle
+   - Primary
+   - Intermediate
+   - Minor
+   - Minute (si hay resolución suficiente)
+3. Aplica las reglas estructurales:
+   - Onda 3 nunca es la más corta.
+   - Onda 4 no se solapa con el territorio de la onda 1.
+   - Correcciones (ABC) deben seguir patrones zigzag, flat o triangle.
+   - Verifica proporciones entre ondas con ratios de Fibonacci: 0.382, 0.618, 1.0, 1.618, 2.618, 4.236.
+4. Usa pivotes relevantes (máximos/mínimos significativos) y calcula las proporciones entre las ondas 1–3 y 2–4 para validar estructura.
+5. Indica el grado actual y la fase probable (impulsiva o correctiva).
+6. Si el conteo tiene ambigüedad, muestra las dos interpretaciones más probables, asignando un % de confianza.
+
+🧮 FORMATO DE RESPUESTA (JSON)
 {
-  "simbolo": "NFLX",
-  "temporalidad": "1D",
-  "grado": "Intermedio",
-  "conteos": [
-    {
-      "tipo": "impulsivo",
-      "confidence": 0.78,
-      "ondas": [
-        {"n": 1, "inicio": "2023-06-01", "fin": "2023-07-12", "precio_inicio": 190.0, "precio_fin": 260.0},
-        {"n": 2, "inicio": "2023-07-12", "fin": "2023-08-05", "precio_inicio": 260.0, "precio_fin": 230.0},
-        {"n": 3, "inicio": "2023-08-05", "fin": "2023-10-15", "precio_inicio": 230.0, "precio_fin": 320.0}
-      ],
-      "invalidacion": {"price": 180.0, "reason": "Wave 2 invalidation"},
-      "notes": "Estructura impulsiva clara con onda 3 extendida"
-    }
+  "symbol": "NFLX",
+  "timeframe": "1D",
+  "historical_low": {
+    "price": 0.3464,
+    "date": "2002-10-10"
+  },
+  "supercycle": [
+    {"wave": 1, "start": 0.3464, "end": 700.0, "date_start": "2002-10-10", "date_end": "2021-11-17", "ratio": 1.0},
+    {"wave": 2, "start": 700.0, "end": 164.30, "date_start": "2021-11-17", "date_end": "2022-05-12", "ratio": 0.236},
+    {"wave": 3, "start": 164.30, "end": 1191.06, "date_start": "2022-05-12", "date_end": "2025-09-20", "ratio": 1.618},
+    {"wave": 4, "status": "in_progress", "projection": "corrective", "target_zone": [756.49, 780.13]},
+    {"wave": 5, "status": "pending"}
   ],
-  "pivotes_usados": 12,
-  "escenario_alternativo": "Posible corrección ABC en desarrollo"
-}`;
+  "confidence": 0.91,
+  "notes": "Conteo coherente con estructura impulsiva. Onda III completa y onda IV iniciando. Confirmar validación si el precio rompe $780."
+}
+
+📊 VISUALIZACIÓN
+Devuelve también un arreglo con los pivotes de cada grado para graficarlos visualmente:
+{
+  "visual_pivots": [
+    {"date": "2002-10-10", "price": 0.3464, "wave": "I", "degree": "Supercycle"},
+    {"date": "2021-11-17", "price": 700.00, "wave": "I", "degree": "Cycle"},
+    {"date": "2022-05-12", "price": 164.30, "wave": "II", "degree": "Cycle"}
+  ]
+}
+
+No inventes precios ni fechas. Usa solo los valores que existan en el dataset o los pivotes provistos.`;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
