@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
+const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,9 +15,9 @@ serve(async (req) => {
   }
 
   try {
-    if (!openAIApiKey) {
+    if (!lovableApiKey) {
       return new Response(
-        JSON.stringify({ error: 'OpenAI API key not configured' }),
+        JSON.stringify({ error: 'Lovable AI key not configured' }),
         { 
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -110,14 +110,14 @@ CHART_DATA:
 }
 `;
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${openAIApiKey}`,
+        'Authorization': `Bearer ${lovableApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5-2025-08-07',
+        model: 'google/gemini-2.5-flash',
         messages: [
           { 
             role: 'system', 
@@ -131,17 +131,19 @@ CHART_DATA:
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('OpenAI API error:', response.status, response.statusText, errorText);
+      console.error('Lovable AI Gateway error:', response.status, response.statusText, errorText);
       
       let errorMessage = 'Error connecting to AI service';
       if (response.status === 429) {
-        errorMessage = 'Too Many Requests - Rate limit exceeded. Please wait a few minutes and try again.';
+        errorMessage = 'Rate limit exceeded. Please wait a few minutes and try again.';
+      } else if (response.status === 402) {
+        errorMessage = 'Payment required. Please add credits to your Lovable AI workspace.';
       } else if (response.status === 401) {
-        errorMessage = 'Invalid API key - Please check OpenAI configuration';
+        errorMessage = 'Invalid API key - Please check Lovable AI configuration';
       } else if (response.status === 400) {
         errorMessage = 'Bad request - Please check the symbol format';
       } else if (response.status >= 500) {
-        errorMessage = 'OpenAI service temporarily unavailable';
+        errorMessage = 'AI service temporarily unavailable';
       }
       
       return new Response(
