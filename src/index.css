@@ -35,6 +35,7 @@ All colors MUST be HSL.
     --destructive-foreground: 210 40% 98%;
 
     --success: 142 76% 36%;             /* Green for success */
+    --success-foreground: 210 40% 98%;  /* White text on green */
     --warning: 38 92% 50%;              /* Orange for warnings */
 
     --border: 214 32% 91%;              /* Light border */
