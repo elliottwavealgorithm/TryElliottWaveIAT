@@ -185,13 +185,13 @@ FORMATO DE SALIDA (ejemplo):
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-pro', // Changed to advanced paid model
+          model: 'google/gemini-2.5-pro',
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Símbolo: ${symbol}\nTimeframe: ${timeframe}\nHistorical Low: ${JSON.stringify(historical_low)}\n\nPivotes:\n${pivotsText}\n\nReturn only JSON per schema.` }
+            { role: 'user', content: `Símbolo: ${symbol}\nTimeframe: ${timeframe}\nHistorical Low: ${JSON.stringify(historical_low)}\n\nPivotes:\n${pivotsText}\n\nReturn COMPLETE valid JSON only.` }
           ],
           temperature: 0.1,
-          max_completion_tokens: 2500,
+          max_completion_tokens: 4000, // Increased from 2500
         }),
       });
 
@@ -213,29 +213,47 @@ FORMATO DE SALIDA (ejemplo):
       const data = await response.json();
       let content = data.choices?.[0]?.message?.content || '';
       
-      console.log('LLM Response (first 300 chars):', content.substring(0, 300));
-      console.log('LLM Response (last 300 chars):', content.substring(content.length - 300));
+      // Log full response for debugging
+      console.log('Full LLM Response length:', content.length);
+      console.log('Full LLM Response:', content);
       
       // Remove markdown code blocks if present
-      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      content = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
       
       // Try to extract JSON from response
       const jsonStart = content.indexOf('{');
       const jsonEnd = content.lastIndexOf('}');
       
       if (jsonStart === -1 || jsonEnd === -1) {
-        throw new Error('No valid JSON found in LLM response');
+        console.error('No valid JSON brackets found in response');
+        if (attempt === maxRetries) {
+          throw new Error('No valid JSON found in LLM response');
+        }
+        continue;
       }
       
       const jsonText = content.slice(jsonStart, jsonEnd + 1);
       console.log('Extracted JSON length:', jsonText.length);
+      console.log('Extracted JSON preview:', jsonText.substring(0, 500));
       
-      const report = JSON.parse(jsonText);
+      let report;
+      try {
+        report = JSON.parse(jsonText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Failed to parse:', jsonText.substring(0, 200));
+        if (attempt === maxRetries) {
+          throw new Error(`Invalid JSON from LLM: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+        }
+        continue;
+      }
       
       if (validateReport(report)) {
+        console.log('Report validated successfully');
         return report;
       } else {
         console.warn('Invalid report structure, retrying...');
+        console.warn('Report preview:', JSON.stringify(report).substring(0, 300));
         if (attempt === maxRetries) {
           throw new Error('Failed to get valid Elliott Wave analysis after retries');
         }
