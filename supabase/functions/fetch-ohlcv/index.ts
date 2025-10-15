@@ -63,7 +63,19 @@ serve(async (req) => {
       });
     }
 
+    // Calculate historical low (lowest low in entire dataset)
+    let historical_low = null;
+    for (const candle of ohlcv) {
+      if (historical_low === null || candle.low < historical_low.price) {
+        historical_low = { 
+          price: candle.low, 
+          date: candle.date 
+        };
+      }
+    }
+
     console.log(`Successfully fetched ${ohlcv.length} data points for ${symbol}`);
+    console.log(`Historical low: ${historical_low?.price} on ${historical_low?.date}`);
 
     return new Response(
       JSON.stringify({ 
@@ -71,6 +83,7 @@ serve(async (req) => {
         range,
         interval,
         dataPoints: ohlcv.length,
+        historical_low,
         ohlcv 
       }),
       {

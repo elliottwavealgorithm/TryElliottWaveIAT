@@ -8,8 +8,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// ZigZag Pivot Detection Algorithm
-function computePivots(history: any[], pct = 3.0, minBars = 5) {
+// ZigZag Pivot Detection Algorithm with historical_low injection
+function computePivots(history: any[], pct = 3.0, minBars = 5, historical_low: any = null) {
   const highs = history.map(h => h.high);
   const lows = history.map(h => h.low);
   const n = history.length;
@@ -57,6 +57,31 @@ function computePivots(history: any[], pct = 3.0, minBars = 5) {
       lastHighIdx = i;
       trend = 1;
     }
+  }
+
+  // Force injection of historical_low as first pivot if provided
+  if (historical_low && pivots.length > 0) {
+    const first = pivots[0];
+    // Check if the historical_low is not already the first pivot
+    if (historical_low.date !== first.date || Math.abs(historical_low.price - first.price) > 1e-8) {
+      // Insert at the beginning
+      pivots.unshift({ 
+        date: historical_low.date, 
+        price: historical_low.price, 
+        type: 'low', 
+        index: -1,
+        source: 'historical_low_forced' 
+      });
+    }
+  } else if (historical_low && pivots.length === 0) {
+    // No pivots detected, still add historical_low as base
+    pivots.push({ 
+      date: historical_low.date, 
+      price: historical_low.price, 
+      type: 'low', 
+      index: -1,
+      source: 'historical_low_forced' 
+    });
   }
 
   return pivots;
@@ -110,36 +135,32 @@ function validateReport(report: any): boolean {
 }
 
 // Call LLM for Elliott Wave Count
-async function callLLMForCount(pivotsText: string, symbol: string, timeframe: string, maxRetries = 2) {
-  const systemPrompt = `Eres un analista técnico experto en la Teoría de Ondas de Elliott. Tu tarea es analizar series de precios históricas completas de una acción, comenzando siempre desde el mínimo histórico disponible en los datos, y construir conteos de ondas válidos según las reglas formales de Elliott Wave.
+async function callLLMForCount(
+  pivotsText: string, 
+  symbol: string, 
+  timeframe: string, 
+  historical_low: any,
+  maxRetries = 2
+) {
+  const systemPrompt = `Eres un analista experto en Teoría de Ondas de Elliott. Recibirás como input un objeto JSON con:
+- symbol
+- timeframe
+- historical_low: {price, date}
+- pivots: [{date, price, type}, ...]
 
-⚙️ INSTRUCCIONES DE ANÁLISIS
+INSTRUCCIONES RÍGIDAS:
+1) DEBES EMPEZAR EL CONTEO desde el historical_low proporcionado. Considera ese record low como el origen (onda 0 o inicio del supercycle) salvo que el admin confirme lo contrario.
+2) No inventes pivotes ni fechas. Usa solo los pivotes entregados y el historical_low.
+3) Identifica y devuelve conteos por grado (Supercycle → Cycle → Primary → Intermediate mínimo). Marca claramente cuál es el grado que consideras como "Supercycle".
+4) Comprueba reglas de Elliott: Onda 3 no la más corta; Onda 4 no debe solapar territorios prohibidos; mantén proporciones Fibonacci y anota ratios (1.618, 2.618, etc.) si aplica.
+5) Si hay dos conteos plausibles, devuelve el más probable con un "confidence" (0.0–1.0).
+6) Devuelve únicamente JSON válido (no texto explicativo). Si añades notas, hazlo en un campo "notes".
 
-1. Identifica el mínimo histórico (low más antiguo) y úsalo como punto inicial (onda 0 o punto de origen del conteo).
-2. Construye el conteo completo en grados:
-   - Supercycle
-   - Cycle
-   - Primary
-   - Intermediate
-   - Minor
-   - Minute (si hay resolución suficiente)
-3. Aplica las reglas estructurales:
-   - Onda 3 nunca es la más corta.
-   - Onda 4 no se solapa con el territorio de la onda 1.
-   - Correcciones (ABC) deben seguir patrones zigzag, flat o triangle.
-   - Verifica proporciones entre ondas con ratios de Fibonacci: 0.382, 0.618, 1.0, 1.618, 2.618, 4.236.
-4. Usa pivotes relevantes (máximos/mínimos significativos) y calcula las proporciones entre las ondas 1–3 y 2–4 para validar estructura.
-5. Indica el grado actual y la fase probable (impulsiva o correctiva).
-6. Si el conteo tiene ambigüedad, muestra las dos interpretaciones más probables, asignando un % de confianza.
-
-🧮 FORMATO DE RESPUESTA (JSON)
+FORMATO DE SALIDA (ejemplo):
 {
   "symbol": "NFLX",
   "timeframe": "1D",
-  "historical_low": {
-    "price": 0.3464,
-    "date": "2002-10-10"
-  },
+  "historical_low": {"date":"2002-10-10","price":0.3464},
   "supercycle": [
     {"wave": 1, "start": 0.3464, "end": 700.0, "date_start": "2002-10-10", "date_end": "2021-11-17", "ratio": 1.0},
     {"wave": 2, "start": 700.0, "end": 164.30, "date_start": "2021-11-17", "date_end": "2022-05-12", "ratio": 0.236},
@@ -148,20 +169,12 @@ async function callLLMForCount(pivotsText: string, symbol: string, timeframe: st
     {"wave": 5, "status": "pending"}
   ],
   "confidence": 0.91,
-  "notes": "Conteo coherente con estructura impulsiva. Onda III completa y onda IV iniciando. Confirmar validación si el precio rompe $780."
-}
-
-📊 VISUALIZACIÓN
-Devuelve también un arreglo con los pivotes de cada grado para graficarlos visualmente:
-{
+  "notes": "Conteo coherente con estructura impulsiva. Onda III completa y onda IV iniciando.",
   "visual_pivots": [
-    {"date": "2002-10-10", "price": 0.3464, "wave": "I", "degree": "Supercycle"},
-    {"date": "2021-11-17", "price": 700.00, "wave": "I", "degree": "Cycle"},
-    {"date": "2022-05-12", "price": 164.30, "wave": "II", "degree": "Cycle"}
+    {"date": "2002-10-10", "price": 0.3464, "label": "origin", "degree": "Supercycle"},
+    {"date": "2021-11-17", "price": 700.00, "label": "Wave1_end", "degree": "Supercycle"}
   ]
-}
-
-No inventes precios ni fechas. Usa solo los valores que existan en el dataset o los pivotes provistos.`;
+}`;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -172,10 +185,10 @@ No inventes precios ni fechas. Usa solo los valores que existan en el dataset o 
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-flash',
+          model: 'google/gemini-2.5-pro', // Changed to advanced paid model
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Pivots data:\n\n${pivotsText}\n\nReturn only JSON per schema.` }
+            { role: 'user', content: `Símbolo: ${symbol}\nTimeframe: ${timeframe}\nHistorical Low: ${JSON.stringify(historical_low)}\n\nPivotes:\n${pivotsText}\n\nReturn only JSON per schema.` }
           ],
           temperature: 0.1,
           max_completion_tokens: 2500,
@@ -302,15 +315,28 @@ serve(async (req) => {
 
     console.log(`Fetched ${history.length} data points`);
 
-    // Step 2: Compute pivots using ZigZag
-    const pivots = computePivots(history, pct, minBars);
-    console.log(`Detected ${pivots.length} pivots`);
+    // Calculate historical low (lowest low in entire dataset)
+    let historical_low = null;
+    for (const candle of history) {
+      if (historical_low === null || candle.low < historical_low.price) {
+        historical_low = { 
+          price: candle.low, 
+          date: candle.date 
+        };
+      }
+    }
+    
+    console.log(`Historical low: ${historical_low?.price} on ${historical_low?.date}`);
+
+    // Step 2: Compute pivots using ZigZag with historical_low injection
+    const pivots = computePivots(history, pct, minBars, historical_low);
+    console.log(`Detected ${pivots.length} pivots (including historical_low if forced)`);
 
     // Step 3: Format for LLM
     const pivotsText = pivotsToText(symbol, timeframe, history, pivots);
 
-    // Step 4: Call LLM for Elliott Wave analysis
-    const report = await callLLMForCount(pivotsText, symbol, timeframe);
+    // Step 4: Call LLM for Elliott Wave analysis with historical_low
+    const report = await callLLMForCount(pivotsText, symbol, timeframe, historical_low);
 
     // Step 5: Return complete analysis
     return new Response(

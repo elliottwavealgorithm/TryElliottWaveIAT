@@ -37,10 +37,21 @@ export const TradingViewWidget = memo(({ symbol, width = "100%", height = 400 }:
         "save_image": true,
         "calendar": false,
         "support_host": "https://www.tradingview.com",
-        "studies": [
-          "RSI@tv-basicstudies",
-          "MACD@tv-basicstudies"
+        "studies": [],
+        "disabled_features": [
+          "use_localstorage_for_settings",
+          "header_widget",
+          "header_compare",
+          "header_symbol_search",
+          "symbol_search_hot_key",
+          "pane_context_menu",
+          "study_templates"
         ],
+        "enabled_features": ["move_logo_to_main_pane"],
+        "studies_overrides": {},
+        "overrides": {
+          "mainSeriesProperties.showCountdown": false
+        },
         "show_popup_button": true,
         "popup_width": "1000",
         "popup_height": "650"
