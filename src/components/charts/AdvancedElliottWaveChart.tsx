@@ -45,60 +45,62 @@ export function AdvancedElliottWaveChart({ data, symbol, candles }: AdvancedElli
     );
   }
 
-  // Merge candle data with wave points
+  // Create chart data combining candles and wave points
   const chartData: any[] = [];
+  const wavePointsMap = new Map();
   
+  // First, collect all wave points with their info
+  data.waves.forEach((wave) => {
+    wavePointsMap.set(wave.start_date, {
+      wavePrice: wave.start_price,
+      wave: wave.wave,
+      label: `Onda ${wave.wave} Inicio`,
+      degree: wave.degree || 'Supercycle',
+    });
+    
+    wavePointsMap.set(wave.end_date, {
+      wavePrice: wave.end_price,
+      wave: wave.wave,
+      label: `Onda ${wave.wave} Fin`,
+      degree: wave.degree || 'Supercycle',
+    });
+  });
+
   // If we have candles, use them as the base
   if (candles && candles.length > 0) {
     candles.forEach(candle => {
+      const waveInfo = wavePointsMap.get(candle.date);
       chartData.push({
         date: candle.date,
         candleHigh: candle.high,
         candleLow: candle.low,
         candleOpen: candle.open,
         candleClose: candle.close,
-        timestamp: new Date(candle.date).getTime()
+        timestamp: new Date(candle.date).getTime(),
+        ...(waveInfo || {})
+      });
+    });
+  } else {
+    // If no candles, just use wave points
+    wavePointsMap.forEach((info, date) => {
+      chartData.push({
+        date,
+        timestamp: new Date(date).getTime(),
+        ...info
       });
     });
   }
 
-  // Create wave line points
-  const wavePoints: any[] = [];
-  data.waves.forEach((wave) => {
-    wavePoints.push({
-      date: wave.start_date,
-      wavePrice: wave.start_price,
-      wave: wave.wave,
-      label: `Onda ${wave.wave} Inicio`,
-      degree: wave.degree || 'Supercycle',
-      timestamp: new Date(wave.start_date).getTime()
-    });
-    
-    wavePoints.push({
-      date: wave.end_date,
-      wavePrice: wave.end_price,
-      wave: wave.wave,
-      label: `Onda ${wave.wave} Fin`,
-      degree: wave.degree || 'Supercycle',
-      timestamp: new Date(wave.end_date).getTime()
-    });
-  });
-
-  // Merge wave points into chart data
-  wavePoints.forEach(wp => {
-    const existing = chartData.find(cd => cd.date === wp.date);
-    if (existing) {
-      existing.wavePrice = wp.wavePrice;
-      existing.wave = wp.wave;
-      existing.label = wp.label;
-      existing.degree = wp.degree;
-    } else {
-      chartData.push(wp);
-    }
-  });
-
   // Sort by timestamp
   chartData.sort((a, b) => a.timestamp - b.timestamp);
+  
+  console.log('Chart data prepared:', {
+    totalPoints: chartData.length,
+    wavePoints: chartData.filter(d => d.wavePrice).length,
+    candlePoints: chartData.filter(d => d.candleClose).length,
+    firstWave: chartData.find(d => d.wavePrice),
+    waves: data.waves
+  });
 
   // Calculate price range
   const allPrices = chartData.flatMap(d => [
