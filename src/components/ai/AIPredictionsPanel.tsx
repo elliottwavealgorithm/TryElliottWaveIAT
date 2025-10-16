@@ -42,7 +42,9 @@ export function AIPredictionsPanel() {
 
       if (analysisError) throw analysisError;
       
-      setAnalysis(analysisData);
+      // The response contains the analysis in analysisData.analysis
+      console.log('Analysis response:', analysisData);
+      setAnalysis(analysisData.analysis || analysisData);
       toast.success("Análisis completado");
     } catch (error: any) {
       console.error('Analysis error:', error);
