@@ -185,13 +185,13 @@ FORMATO DE SALIDA (ejemplo):
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.5-pro',
+          model: 'google/gemini-2.5-flash', // Default model included in paid plan
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `Símbolo: ${symbol}\nTimeframe: ${timeframe}\nHistorical Low: ${JSON.stringify(historical_low)}\n\nPivotes:\n${pivotsText}\n\nReturn COMPLETE valid JSON only.` }
           ],
           temperature: 0.1,
-          max_completion_tokens: 4000, // Increased from 2500
+          max_completion_tokens: 4000,
         }),
       });
 
