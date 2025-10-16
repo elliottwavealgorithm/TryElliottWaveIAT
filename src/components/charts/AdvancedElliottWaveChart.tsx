@@ -1,4 +1,4 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea } from 'recharts';
+import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Area } from 'recharts';
 
 interface WaveData {
   wave: string;
@@ -6,7 +6,15 @@ interface WaveData {
   end_price: number;
   start_date: string;
   end_date: string;
-  degree?: 'Primary' | 'Intermediate' | 'Minor';
+  degree?: string;
+}
+
+interface Candle {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
 }
 
 interface ChartData {
@@ -16,20 +24,19 @@ interface ChartData {
     resistance: number[];
     invalidation: number;
   };
-  scenarios?: {
-    name: string;
-    probability: number;
-    target: number;
-    color: string;
-  }[];
+  scenarios?: Array<{
+    label: string;
+    price: number;
+  }>;
 }
 
 interface AdvancedElliottWaveChartProps {
   data: ChartData;
   symbol: string;
+  candles?: Candle[];
 }
 
-export function AdvancedElliottWaveChart({ data, symbol }: AdvancedElliottWaveChartProps) {
+export function AdvancedElliottWaveChart({ data, symbol, candles }: AdvancedElliottWaveChartProps) {
   if (!data?.waves) {
     return (
       <div className="w-full h-96 flex items-center justify-center bg-muted/50 rounded-lg">
@@ -38,79 +45,104 @@ export function AdvancedElliottWaveChart({ data, symbol }: AdvancedElliottWaveCh
     );
   }
 
-  // Convert wave data to chart format - create a continuous line
+  // Merge candle data with wave points
   const chartData: any[] = [];
   
-  data.waves.forEach((wave, index) => {
-    // Add start point
-    chartData.push({
+  // If we have candles, use them as the base
+  if (candles && candles.length > 0) {
+    candles.forEach(candle => {
+      chartData.push({
+        date: candle.date,
+        candleHigh: candle.high,
+        candleLow: candle.low,
+        candleOpen: candle.open,
+        candleClose: candle.close,
+        timestamp: new Date(candle.date).getTime()
+      });
+    });
+  }
+
+  // Create wave line points
+  const wavePoints: any[] = [];
+  data.waves.forEach((wave) => {
+    wavePoints.push({
       date: wave.start_date,
-      price: wave.start_price,
+      wavePrice: wave.start_price,
       wave: wave.wave,
-      degree: wave.degree || 'Minor',
-      label: `Wave ${wave.wave} Start`,
+      label: `Onda ${wave.wave} Inicio`,
+      degree: wave.degree || 'Supercycle',
       timestamp: new Date(wave.start_date).getTime()
     });
     
-    // Add end point
-    chartData.push({
+    wavePoints.push({
       date: wave.end_date,
-      price: wave.end_price,
+      wavePrice: wave.end_price,
       wave: wave.wave,
-      degree: wave.degree || 'Minor',
-      label: `Wave ${wave.wave} End`,
+      label: `Onda ${wave.wave} Fin`,
+      degree: wave.degree || 'Supercycle',
       timestamp: new Date(wave.end_date).getTime()
     });
+  });
+
+  // Merge wave points into chart data
+  wavePoints.forEach(wp => {
+    const existing = chartData.find(cd => cd.date === wp.date);
+    if (existing) {
+      existing.wavePrice = wp.wavePrice;
+      existing.wave = wp.wave;
+      existing.label = wp.label;
+      existing.degree = wp.degree;
+    } else {
+      chartData.push(wp);
+    }
   });
 
   // Sort by timestamp
   chartData.sort((a, b) => a.timestamp - b.timestamp);
 
-  const minPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.price)) * 0.95 : 0;
-  const maxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.price)) * 1.05 : 100;
+  // Calculate price range
+  const allPrices = chartData.flatMap(d => [
+    d.candleHigh, 
+    d.candleLow, 
+    d.wavePrice
+  ].filter(p => p != null));
+  
+  const minPrice = allPrices.length > 0 ? Math.min(...allPrices) * 0.95 : 0;
+  const maxPrice = allPrices.length > 0 ? Math.max(...allPrices) * 1.05 : 100;
 
-  // Get degree colors
-  const getDegreeColor = (degree: string) => {
-    switch (degree) {
-      case 'Primary': return '#ef4444';
-      case 'Intermediate': return '#3b82f6';
-      case 'Minor': return '#10b981';
-      default: return '#10b981';
+  const getDegreeColor = (degree?: string) => {
+    switch(degree) {
+      case 'Supercycle': return '#8b5cf6';
+      case 'Cycle': return '#3b82f6';
+      case 'Primary': return '#10b981';
+      case 'Intermediate': return '#f59e0b';
+      default: return '#8b5cf6';
     }
   };
 
-  // Get degree symbol
-  const getDegreeSymbol = (degree: string, wave: string) => {
-    switch (degree) {
-      case 'Primary': return ['①', '②', '③', '④', '⑤'][parseInt(wave) - 1] || wave;
-      case 'Intermediate': return `(${wave})`;
-      case 'Minor': return wave;
-      default: return wave;
-    }
-  };
-
-  // Custom dot renderer for wave labels
-  const CustomDot = (props: any) => {
-    const { cx, cy, payload } = props;
-    if (!payload) return null;
-
-    const symbol = getDegreeSymbol(payload.degree, payload.wave);
-    const color = getDegreeColor(payload.degree);
-
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (!active || !payload || !payload.length) return null;
+    
+    const data = payload[0].payload;
     return (
-      <g>
-        <circle cx={cx} cy={cy} r={6} fill={color} stroke="white" strokeWidth={2} />
-        <text 
-          x={cx} 
-          y={cy - 15} 
-          textAnchor="middle" 
-          fontSize="12" 
-          fontWeight="bold"
-          fill={color}
-        >
-          {symbol}
-        </text>
-      </g>
+      <div className="bg-background border border-border p-3 rounded-lg shadow-lg">
+        <p className="text-xs text-muted-foreground mb-1">{data.date}</p>
+        {data.candleClose && (
+          <div className="space-y-1">
+            <p className="text-xs"><span className="font-medium">O:</span> ${data.candleOpen?.toFixed(2)}</p>
+            <p className="text-xs"><span className="font-medium">H:</span> ${data.candleHigh?.toFixed(2)}</p>
+            <p className="text-xs"><span className="font-medium">L:</span> ${data.candleLow?.toFixed(2)}</p>
+            <p className="text-xs"><span className="font-medium">C:</span> ${data.candleClose?.toFixed(2)}</p>
+          </div>
+        )}
+        {data.wavePrice && (
+          <div className="mt-2 pt-2 border-t">
+            <p className="text-xs font-medium">{data.label}</p>
+            <p className="text-xs">Precio: ${data.wavePrice?.toFixed(2)}</p>
+            {data.degree && <p className="text-xs text-muted-foreground">{data.degree}</p>}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -118,176 +150,158 @@ export function AdvancedElliottWaveChart({ data, symbol }: AdvancedElliottWaveCh
     <div className="w-full space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-lg font-semibold">
-          Análisis Elliott Wave - {symbol}
+          Conteo Elliott Wave - {symbol}
         </h4>
-        <div className="flex gap-2 text-xs">
-          <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-400">
-            Conteo Principal
-          </span>
-          <span className="px-2 py-1 rounded bg-green-500/20 text-green-400">
-            Escenarios
-          </span>
-        </div>
       </div>
 
       <div className="w-full h-96 bg-background border rounded-lg p-4">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(120, 113, 108, 0.2)" />
+          <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis 
               dataKey="date" 
-              tick={{ fontSize: 10, fill: 'rgb(120, 113, 108)' }}
+              tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+              stroke="hsl(var(--border))"
               interval="preserveStartEnd"
-              axisLine={{ stroke: 'rgba(120, 113, 108, 0.2)' }}
             />
             <YAxis 
               domain={[minPrice, maxPrice]}
-              tick={{ fontSize: 10, fill: 'rgb(120, 113, 108)' }}
+              tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+              stroke="hsl(var(--border))"
               tickFormatter={(value) => `$${value.toFixed(0)}`}
-              axisLine={{ stroke: 'rgba(120, 113, 108, 0.2)' }}
             />
-            <Tooltip 
-              labelFormatter={(label) => `Fecha: ${label}`}
-              formatter={(value: any, name) => [
-                `$${Number(value).toFixed(2)}`, 
-                name === 'price' ? 'Precio' : name
-              ]}
-              contentStyle={{
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                border: '1px solid rgba(120, 113, 108, 0.2)',
-                borderRadius: '8px',
-                color: 'white'
+            <Tooltip content={<CustomTooltip />} />
+            
+            {/* Candles as Area */}
+            {candles && candles.length > 0 && (
+              <>
+                <Area 
+                  type="monotone" 
+                  dataKey="candleHigh" 
+                  stroke="hsl(var(--muted-foreground) / 0.5)"
+                  fill="hsl(var(--muted) / 0.2)"
+                  strokeWidth={0.5}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="candleLow" 
+                  stroke="hsl(var(--muted-foreground) / 0.5)"
+                  fill="hsl(var(--background))"
+                  strokeWidth={0.5}
+                />
+              </>
+            )}
+            
+            {/* Elliott Wave Line */}
+            <Line 
+              type="linear" 
+              dataKey="wavePrice" 
+              stroke={getDegreeColor(data.waves[0]?.degree)}
+              strokeWidth={3}
+              dot={(props: any) => {
+                const { cx, cy, payload } = props;
+                if (!payload.wavePrice) return null;
+                return (
+                  <g>
+                    <circle
+                      cx={cx}
+                      cy={cy}
+                      r={6}
+                      fill={getDegreeColor(payload.degree)}
+                      stroke="hsl(var(--background))"
+                      strokeWidth={2}
+                    />
+                    <text 
+                      x={cx} 
+                      y={cy - 12} 
+                      textAnchor="middle" 
+                      fontSize="11" 
+                      fontWeight="bold"
+                      fill={getDegreeColor(payload.degree)}
+                    >
+                      {payload.wave}
+                    </text>
+                  </g>
+                );
               }}
+              connectNulls
             />
-            
-            {/* Support levels */}
-            {data.key_levels.support?.map((level, index) => (
+
+            {/* Support Lines */}
+            {data.key_levels.support?.map((level, idx) => (
               <ReferenceLine 
-                key={`support-${index}`}
+                key={`support-${idx}`}
                 y={level} 
-                stroke="rgba(34, 197, 94, 0.7)" 
+                stroke="#10b981" 
                 strokeDasharray="5 5"
-                label={{ value: `Soporte ${index + 1}`, position: "insideTopRight" }}
+                strokeWidth={1.5}
+                label={{ value: `Soporte: $${level.toFixed(2)}`, position: 'left', fill: '#10b981', fontSize: 10 }}
               />
             ))}
-            
-            {/* Resistance levels */}
-            {data.key_levels.resistance?.map((level, index) => (
+
+            {/* Resistance Lines */}
+            {data.key_levels.resistance?.map((level, idx) => (
               <ReferenceLine 
-                key={`resistance-${index}`}
+                key={`resistance-${idx}`}
                 y={level} 
-                stroke="rgba(239, 68, 68, 0.7)" 
+                stroke="#ef4444" 
                 strokeDasharray="5 5"
-                label={{ value: `Resistencia ${index + 1}`, position: "insideTopRight" }}
+                strokeWidth={1.5}
+                label={{ value: `Resistencia: $${level.toFixed(2)}`, position: 'right', fill: '#ef4444', fontSize: 10 }}
               />
             ))}
-            
-            {/* Invalidation level */}
+
+            {/* Invalidation Line */}
             {data.key_levels.invalidation && (
               <ReferenceLine 
                 y={data.key_levels.invalidation} 
-                stroke="rgba(251, 191, 36, 0.8)" 
-                strokeDasharray="10 5"
-                label={{ value: "Invalidación", position: "insideTopRight" }}
+                stroke="#f59e0b" 
+                strokeDasharray="3 3"
+                strokeWidth={2}
+                label={{ value: `Invalidación: $${data.key_levels.invalidation.toFixed(2)}`, position: 'insideBottomRight', fill: '#f59e0b', fontSize: 10 }}
               />
             )}
-            
-            {/* Scenario projections */}
-            {data.scenarios?.map((scenario, index) => (
+
+            {/* Scenario Lines */}
+            {data.scenarios?.map((scenario, idx) => (
               <ReferenceLine 
-                key={`scenario-${index}`}
-                y={scenario.target} 
-                stroke={scenario.color} 
+                key={`scenario-${idx}`}
+                y={scenario.price} 
+                stroke="#8b5cf6" 
                 strokeDasharray="2 2"
-                label={{ value: `${scenario.name} (${scenario.probability}%)`, position: "insideTopRight" }}
+                strokeWidth={1}
+                label={{ value: scenario.label, position: 'insideTopRight', fill: '#8b5cf6', fontSize: 9 }}
               />
             ))}
-            
-            <Line 
-              type="monotone" 
-              dataKey="price" 
-              stroke="#3b82f6" 
-              strokeWidth={3}
-              dot={<CustomDot />}
-              activeDot={{ r: 8, stroke: '#3b82f6', strokeWidth: 2 }}
-            />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
       
       {/* Legend */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-        <div className="space-y-2">
-          <h5 className="font-medium text-green-400">📈 Niveles de Soporte</h5>
-          {data.key_levels.support?.map((level, index) => (
-            <div key={index} className="flex justify-between">
-              <span>Soporte {index + 1}:</span>
-              <span className="font-mono">${level.toFixed(2)}</span>
-            </div>
-          ))}
+      <div className="flex flex-wrap gap-4 text-xs">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getDegreeColor(data.waves[0]?.degree) }}></div>
+          <span className="text-muted-foreground">Ondas Elliott</span>
         </div>
-        
-        <div className="space-y-2">
-          <h5 className="font-medium text-red-400">📉 Niveles de Resistencia</h5>
-          {data.key_levels.resistance?.map((level, index) => (
-            <div key={index} className="flex justify-between">
-              <span>Resistencia {index + 1}:</span>
-              <span className="font-mono">${level.toFixed(2)}</span>
-            </div>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-0.5 bg-[#10b981]" style={{borderTop: '1.5px dashed #10b981'}}></div>
+          <span className="text-muted-foreground">Soporte</span>
         </div>
-        
-        <div className="space-y-2">
-          <h5 className="font-medium text-yellow-400">❌ Nivel de Invalidación</h5>
-          <div className="flex justify-between">
-            <span>Invalidación:</span>
-            <span className="font-mono">${data.key_levels.invalidation?.toFixed(2) || 'N/A'}</span>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-0.5 bg-[#ef4444]" style={{borderTop: '1.5px dashed #ef4444'}}></div>
+          <span className="text-muted-foreground">Resistencia</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-0.5 bg-[#f59e0b]" style={{borderTop: '2px dashed #f59e0b'}}></div>
+          <span className="text-muted-foreground">Invalidación</span>
+        </div>
+        {candles && candles.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-muted/40 border border-muted-foreground/50"></div>
+            <span className="text-muted-foreground">Precio (velas)</span>
           </div>
-        </div>
+        )}
       </div>
-
-      {/* Wave Degrees Legend */}
-      <div className="p-4 bg-muted/50 rounded-lg">
-        <h5 className="font-medium mb-2">🌊 Grados de Ondas Elliott</h5>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500"></div>
-            <span><span className="font-medium">Primary:</span> ①②③④⑤</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-            <span><span className="font-medium">Intermediate:</span> (1)(2)(3)(4)(5)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-green-500"></div>
-            <span><span className="font-medium">Minor:</span> 1-2-3-4-5</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Scenarios if available */}
-      {data.scenarios && data.scenarios.length > 0 && (
-        <div className="p-4 bg-muted/50 rounded-lg">
-          <h5 className="font-medium mb-2">🎯 Escenarios Posibles</h5>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            {data.scenarios.map((scenario, index) => (
-              <div key={index} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div 
-                    className="w-3 h-3 rounded-full" 
-                    style={{ backgroundColor: scenario.color }}
-                  ></div>
-                  <span>{scenario.name}</span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="font-mono">${scenario.target.toFixed(2)}</span>
-                  <span className="text-muted-foreground">({scenario.probability}%)</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
