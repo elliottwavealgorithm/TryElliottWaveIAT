@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.analyze-elliott-wave]
 verify_jwt = false
+
+[functions.chat-with-analysis]
+verify_jwt = false

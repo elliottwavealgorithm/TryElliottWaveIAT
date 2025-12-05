@@ -4,12 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, TrendingUp, Zap, Bot, ArrowRight, ChevronDown } from "lucide-react";
+import { Loader2, TrendingUp, Zap, Bot, ChevronDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
 import { TimeframeSelector } from "@/components/elliott/TimeframeSelector";
 import { WaveCountDisplay } from "@/components/elliott/WaveCountDisplay";
+import { AnalysisChat } from "@/components/elliott/AnalysisChat";
 import goxLogo from "@/assets/gox-logo.png";
 
 interface ElliottAnalysis {
@@ -98,19 +99,10 @@ export default function Index() {
     }
   };
 
-  const handleApprove = () => {
-    toast({
-      title: "Count Approved",
-      description: "Analysis saved for training",
-    });
-  };
-
-  const handleReject = () => {
-    toast({
-      title: "Recalculating",
-      description: "Generating new analysis...",
-    });
-    analyzeSymbol();
+  const handleAnalysisUpdate = (newAnalysis: any) => {
+    if (analysis) {
+      setAnalysis({ ...analysis, analysis: newAnalysis });
+    }
   };
 
   const scrollToChart = () => {
@@ -239,7 +231,7 @@ export default function Index() {
         {(analysis?.loading || analysis?.analysis) && (
           <section className="py-16 border-t border-border/50">
             <div className="container mx-auto px-6">
-              <div className="max-w-4xl mx-auto">
+              <div className="max-w-6xl mx-auto">
                 {analysis.loading ? (
                   <Card className="clean-card">
                     <CardContent className="py-16 text-center">
@@ -250,11 +242,15 @@ export default function Index() {
                     </CardContent>
                   </Card>
                 ) : analysis.analysis && (
-                  <WaveCountDisplay 
-                    analysis={analysis.analysis}
-                    onApprove={handleApprove}
-                    onReject={handleReject}
-                  />
+                  <div className="grid lg:grid-cols-2 gap-6">
+                    <WaveCountDisplay analysis={analysis.analysis} />
+                    <AnalysisChat 
+                      analysis={analysis.analysis}
+                      symbol={analysis.symbol}
+                      timeframe={analysis.timeframe}
+                      onAnalysisUpdate={handleAnalysisUpdate}
+                    />
+                  </div>
                 )}
               </div>
             </div>

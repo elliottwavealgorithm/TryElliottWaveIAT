@@ -125,11 +125,7 @@ export function AIPredictionsPanel() {
       {analysis && (
         <>
           {/* Wave Count Display */}
-          <WaveCountDisplay 
-            analysis={analysis}
-            onApprove={handleApprove}
-            onReject={handleReject}
-          />
+          <WaveCountDisplay analysis={analysis} />
 
           {/* Visual Chart */}
           {analysis.supercycle && analysis.supercycle.length > 0 && (

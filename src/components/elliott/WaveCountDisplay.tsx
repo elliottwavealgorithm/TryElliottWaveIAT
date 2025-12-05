@@ -1,7 +1,49 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { CheckCircle, XCircle, AlertTriangle, TrendingUp } from "lucide-react";
+import { AlertTriangle, TrendingUp, Target, ShieldAlert } from "lucide-react";
+
+interface WaveData {
+  start?: number;
+  end?: number;
+  date_start?: string;
+  date_end?: string;
+  ratio?: number;
+  status?: "complete" | "in_progress" | "pending";
+  projection?: string;
+  target_zone?: number[];
+}
+
+interface PrimaryCount {
+  label: string;
+  probability: string;
+  waves: Record<string, WaveData>;
+  pattern_type?: string;
+  fib_validation?: string;
+  channel_validation?: string;
+  cage_validation?: string;
+  invalidations?: string[] | string;
+  commentary?: string;
+}
+
+interface AlternateCount {
+  label: string;
+  probability: string;
+  justification?: string;
+  invalidations?: string[] | string;
+  cage_validation?: string;
+}
+
+interface Levels {
+  key_supports?: number[];
+  key_resistances?: number[];
+  fibonacci_targets?: number[];
+  invalidations?: number[];
+}
+
+interface HistoricalLow {
+  price: number;
+  date: string;
+}
 
 interface SupercycleWave {
   wave: number;
@@ -15,42 +57,35 @@ interface SupercycleWave {
   target_zone?: number[];
 }
 
-interface HistoricalLow {
-  price: number;
-  date: string;
-}
-
-interface VisualPivot {
-  date: string;
-  price: number;
-  wave: string;
-  degree: string;
-}
-
 interface Analysis {
   symbol: string;
   timeframe: string;
   historical_low?: HistoricalLow;
-  supercycle: SupercycleWave[];
+  primary_count?: PrimaryCount;
+  alternate_counts?: AlternateCount[];
+  levels?: Levels;
   confidence?: number;
   notes?: string;
-  visual_pivots?: VisualPivot[];
+  supercycle?: SupercycleWave[];
 }
 
 interface WaveCountDisplayProps {
   analysis: Analysis;
-  onApprove?: () => void;
-  onReject?: () => void;
 }
 
-export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDisplayProps) {
-  const completedWaves = analysis.supercycle?.filter(w => !w.status || w.status === undefined) || [];
-  const inProgressWave = analysis.supercycle?.find(w => w.status === "in_progress");
-  const pendingWaves = analysis.supercycle?.filter(w => w.status === "pending") || [];
+export function WaveCountDisplay({ analysis }: WaveCountDisplayProps) {
+  const primaryCount = analysis.primary_count;
+  const supercycle = analysis.supercycle || [];
+  const alternates = analysis.alternate_counts || [];
+  const levels = analysis.levels;
+
+  // Determine waves to display (prefer primary_count.waves, fallback to supercycle)
+  const waves = primaryCount?.waves || {};
+  const waveEntries = Object.entries(waves).filter(([_, w]) => w && (w.start !== undefined || w.status));
 
   return (
-    <Card className="clean-card">
-      <CardHeader>
+    <Card className="clean-card h-fit">
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-muted">
@@ -58,7 +93,9 @@ export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDis
             </div>
             <div>
               <CardTitle className="text-lg">Elliott Wave Analysis</CardTitle>
-              <p className="text-xs text-muted-foreground">Supercycle Degree</p>
+              <p className="text-xs text-muted-foreground">
+                {primaryCount?.pattern_type || 'Supercycle'} • {analysis.symbol}
+              </p>
             </div>
           </div>
           {analysis.confidence && (
@@ -68,7 +105,7 @@ export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDis
           )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-5">
         {/* Historical Low */}
         {analysis.historical_low && (
           <div className="p-4 bg-muted/30 rounded-xl border border-border">
@@ -80,32 +117,69 @@ export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDis
           </div>
         )}
 
-        {/* Completed Waves Table */}
-        {completedWaves.length > 0 && (
+        {/* Primary Count - Waves Table */}
+        {(waveEntries.length > 0 || supercycle.length > 0) && (
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Completed Waves</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                {primaryCount?.label || 'Wave Structure'}
+              </h3>
+              {primaryCount?.probability && (
+                <Badge 
+                  variant={primaryCount.probability === 'high' ? 'default' : 'secondary'}
+                  className="text-xs"
+                >
+                  {primaryCount.probability} probability
+                </Badge>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Wave</th>
-                    <th className="text-left py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Start</th>
-                    <th className="text-left py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">End</th>
-                    <th className="text-right py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Start Price</th>
-                    <th className="text-right py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">End Price</th>
-                    <th className="text-right py-3 px-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">Ratio</th>
+                    <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground uppercase">Wave</th>
+                    <th className="text-left py-2 px-2 text-xs font-medium text-muted-foreground uppercase">Date</th>
+                    <th className="text-right py-2 px-2 text-xs font-medium text-muted-foreground uppercase">Price</th>
+                    <th className="text-right py-2 px-2 text-xs font-medium text-muted-foreground uppercase">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {completedWaves.map((wave, idx) => (
-                    <tr key={idx} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                      <td className="py-3 px-2 font-semibold">Wave {wave.wave}</td>
-                      <td className="py-3 px-2 text-muted-foreground font-mono text-xs">{wave.date_start || '-'}</td>
-                      <td className="py-3 px-2 text-muted-foreground font-mono text-xs">{wave.date_end || '-'}</td>
-                      <td className="py-3 px-2 text-right font-mono">${wave.start?.toFixed(2) || '-'}</td>
-                      <td className="py-3 px-2 text-right font-mono">${wave.end?.toFixed(2) || '-'}</td>
-                      <td className="py-3 px-2 text-right">
-                        <Badge variant="secondary" className="font-mono text-xs">{wave.ratio?.toFixed(3) || '-'}</Badge>
+                  {waveEntries.length > 0 ? (
+                    waveEntries.map(([key, wave]) => (
+                      <tr key={key} className="border-b border-border/50">
+                        <td className="py-2 px-2 font-semibold capitalize">{key.replace('wave', 'Wave ')}</td>
+                        <td className="py-2 px-2 text-muted-foreground font-mono text-xs">
+                          {wave.date_start || '-'} → {wave.date_end || '-'}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {wave.start?.toFixed(2) || '-'} → {wave.end?.toFixed(2) || '-'}
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          <Badge 
+                            variant={wave.status === 'pending' ? 'outline' : wave.status === 'in_progress' ? 'secondary' : 'default'}
+                            className="text-xs"
+                          >
+                            {wave.status || 'complete'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))
+                  ) : supercycle.map((wave, idx) => (
+                    <tr key={idx} className="border-b border-border/50">
+                      <td className="py-2 px-2 font-semibold">Wave {wave.wave}</td>
+                      <td className="py-2 px-2 text-muted-foreground font-mono text-xs">
+                        {wave.date_start || '-'} → {wave.date_end || '-'}
+                      </td>
+                      <td className="py-2 px-2 text-right font-mono">
+                        {wave.start?.toFixed(2) || '-'} → {wave.end?.toFixed(2) || '-'}
+                      </td>
+                      <td className="py-2 px-2 text-right">
+                        <Badge 
+                          variant={wave.status === 'pending' ? 'outline' : wave.status === 'in_progress' ? 'secondary' : 'default'}
+                          className="text-xs"
+                        >
+                          {wave.status || 'complete'}
+                        </Badge>
                       </td>
                     </tr>
                   ))}
@@ -115,56 +189,91 @@ export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDis
           </div>
         )}
 
-        {/* In Progress Wave */}
-        {inProgressWave && (
-          <div className="p-4 rounded-xl bg-warning/10 border border-warning/30">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-warning mt-0.5" />
-              <div className="flex-1">
-                <div className="font-semibold">Wave {inProgressWave.wave} — In Progress</div>
-                <div className="text-sm text-muted-foreground mt-1">{inProgressWave.projection}</div>
-                {inProgressWave.target_zone && inProgressWave.target_zone.length === 2 && (
-                  <div className="text-sm mt-2">
-                    <span className="text-muted-foreground">Target zone: </span>
-                    <span className="font-mono font-medium">
-                      ${inProgressWave.target_zone[0].toFixed(2)} — ${inProgressWave.target_zone[1].toFixed(2)}
-                    </span>
+        {/* Validations */}
+        {primaryCount && (
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            {primaryCount.fib_validation && (
+              <div className="p-3 bg-muted/20 rounded-lg">
+                <div className="font-medium mb-1">Fibonacci</div>
+                <div className="text-muted-foreground">{primaryCount.fib_validation}</div>
+              </div>
+            )}
+            {primaryCount.cage_validation && (
+              <div className="p-3 bg-muted/20 rounded-lg">
+                <div className="font-medium mb-1">Cage Theory</div>
+                <div className="text-muted-foreground">{primaryCount.cage_validation}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Key Levels */}
+        {levels && (
+          <div className="p-4 bg-muted/20 rounded-xl border border-border space-y-3">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4" />
+              <span className="text-sm font-semibold">Key Levels</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4 text-xs">
+              {levels.key_supports && levels.key_supports.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground mb-1">Supports</div>
+                  <div className="font-mono">{levels.key_supports.map(s => `$${s.toFixed(2)}`).join(', ')}</div>
+                </div>
+              )}
+              {levels.key_resistances && levels.key_resistances.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground mb-1">Resistances</div>
+                  <div className="font-mono">{levels.key_resistances.map(r => `$${r.toFixed(2)}`).join(', ')}</div>
+                </div>
+              )}
+              {levels.fibonacci_targets && levels.fibonacci_targets.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground mb-1">Fib Targets</div>
+                  <div className="font-mono">{levels.fibonacci_targets.map(t => `$${t.toFixed(2)}`).join(', ')}</div>
+                </div>
+              )}
+              {levels.invalidations && levels.invalidations.length > 0 && (
+                <div>
+                  <div className="text-muted-foreground mb-1 flex items-center gap-1">
+                    <ShieldAlert className="h-3 w-3 text-destructive" />
+                    Invalidations
                   </div>
+                  <div className="font-mono text-destructive">{levels.invalidations.map(i => `$${i.toFixed(2)}`).join(', ')}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Alternate Counts */}
+        {alternates.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              Alternate Counts
+            </h3>
+            {alternates.map((alt, idx) => (
+              <div key={idx} className="p-3 bg-warning/5 border border-warning/20 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm">{alt.label}</span>
+                  <Badge variant="outline" className="text-xs">{alt.probability}</Badge>
+                </div>
+                {alt.justification && (
+                  <p className="text-xs text-muted-foreground">{alt.justification}</p>
                 )}
               </div>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Pending Waves */}
-        {pendingWaves.length > 0 && (
+        {/* Commentary / Notes */}
+        {(primaryCount?.commentary || analysis.notes) && (
           <div className="p-4 bg-muted/20 rounded-xl border border-border">
-            <div className="text-xs font-medium mb-2 uppercase tracking-wide text-muted-foreground">Pending Waves</div>
-            <div className="flex gap-2">
-              {pendingWaves.map((wave, idx) => (
-                <Badge key={idx} variant="outline" className="font-mono">
-                  Wave {wave.wave}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Notes */}
-        {analysis.notes && (
-          <div className="text-sm text-muted-foreground p-4 bg-muted/20 rounded-xl border border-border">
-            <div className="text-xs font-medium mb-2 uppercase tracking-wide">Analysis Notes</div>
-            {analysis.notes}
-          </div>
-        )}
-
-        {/* Visual Pivots Summary */}
-        {analysis.visual_pivots && analysis.visual_pivots.length > 0 && (
-          <div className="p-4 bg-muted/20 rounded-xl border border-border">
-            <div className="text-xs font-medium mb-1 uppercase tracking-wide text-muted-foreground">Detected Pivots</div>
-            <div className="text-sm">
-              {analysis.visual_pivots.length} pivots across multiple wave degrees
-            </div>
+            <div className="text-xs font-medium mb-2 uppercase tracking-wide text-muted-foreground">Analysis Notes</div>
+            <p className="text-sm text-foreground/80">
+              {primaryCount?.commentary || analysis.notes}
+            </p>
           </div>
         )}
 
@@ -173,24 +282,6 @@ export function WaveCountDisplay({ analysis, onApprove, onReject }: WaveCountDis
           <span>Symbol: {analysis.symbol}</span>
           <span>Timeframe: {analysis.timeframe}</span>
         </div>
-
-        {/* Action Buttons */}
-        {(onApprove || onReject) && (
-          <div className="flex gap-3 pt-4">
-            {onApprove && (
-              <Button onClick={onApprove} className="flex-1">
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Approve Count
-              </Button>
-            )}
-            {onReject && (
-              <Button onClick={onReject} className="flex-1" variant="outline">
-                <XCircle className="h-4 w-4 mr-2" />
-                Reject & Recalculate
-              </Button>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
   );
