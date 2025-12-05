@@ -14,6 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
+      approved_wave_counts: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          historical_low: Json
+          id: string
+          is_reference: boolean | null
+          notes: string | null
+          source: string
+          supercycle: Json
+          symbol: string
+          timeframe: string
+          updated_at: string
+          user_id: string
+          version_number: number | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          historical_low: Json
+          id?: string
+          is_reference?: boolean | null
+          notes?: string | null
+          source?: string
+          supercycle: Json
+          symbol: string
+          timeframe?: string
+          updated_at?: string
+          user_id: string
+          version_number?: number | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          historical_low?: Json
+          id?: string
+          is_reference?: boolean | null
+          notes?: string | null
+          source?: string
+          supercycle?: Json
+          symbol?: string
+          timeframe?: string
+          updated_at?: string
+          user_id?: string
+          version_number?: number | null
+        }
+        Relationships: []
+      }
       instruments: {
         Row: {
           created_at: string

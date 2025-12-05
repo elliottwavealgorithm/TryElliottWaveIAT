@@ -25,17 +25,21 @@ export function AIPredictionsPanel() {
 
       if (ohlcvError) throw ohlcvError;
       
-      // Store candles for the chart
-      if (ohlcvData?.candles) {
-        setCandles(ohlcvData.candles);
+      console.log('OHLCV data received:', ohlcvData);
+      
+      // Store candles for the chart (data is in ohlcv property)
+      const candleData = ohlcvData?.ohlcv || [];
+      if (candleData.length > 0) {
+        setCandles(candleData);
+        console.log('Candles set:', candleData.length, 'points');
       }
 
       // Then analyze Elliott Wave
       const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-elliott-wave', {
         body: { 
           symbol: 'NFLX', 
-          timeframe: '1D',
-          candles: ohlcvData?.candles || [],
+          timeframe: '1d',
+          candles: candleData,
           historical_low: ohlcvData?.historical_low
         }
       });
@@ -54,9 +58,35 @@ export function AIPredictionsPanel() {
     }
   };
 
-  const handleApprove = () => {
-    toast.success("Conteo aprobado y guardado");
-    // Aquí puedes guardar el conteo en la base de datos
+  const handleApprove = async () => {
+    if (!analysis) return;
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast.error("Debes iniciar sesión para guardar conteos");
+        return;
+      }
+
+      const { error } = await supabase.from('approved_wave_counts').insert({
+        symbol: analysis.symbol || 'NFLX',
+        timeframe: analysis.timeframe || 'daily',
+        historical_low: analysis.historical_low,
+        supercycle: analysis.supercycle,
+        confidence: analysis.confidence || 0,
+        notes: analysis.notes,
+        source: 'ai_approved',
+        user_id: user.id,
+        is_reference: true
+      });
+
+      if (error) throw error;
+      toast.success("Conteo aprobado y guardado para entrenamiento");
+    } catch (error: any) {
+      console.error('Error saving approved count:', error);
+      toast.error(error.message || "Error al guardar el conteo");
+    }
   };
 
   const handleReject = async () => {
