@@ -354,9 +354,10 @@ serve(async (req) => {
     }
 
     // Calculate historical low if not provided
-    if (!historical_low) {
+    if (!historical_low && history.length > 0) {
+      historical_low = { price: history[0].low, date: history[0].date };
       for (const candle of history) {
-        if (historical_low === null || candle.low < historical_low.price) {
+        if (candle.low < historical_low.price) {
           historical_low = { 
             price: candle.low, 
             date: candle.date 
@@ -365,7 +366,11 @@ serve(async (req) => {
       }
     }
     
-    console.log(`Historical low: ${historical_low?.price} on ${historical_low?.date}`);
+    if (!historical_low) {
+      throw new Error('No data available to calculate historical low');
+    }
+    
+    console.log(`Historical low: ${historical_low.price} on ${historical_low.date}`);
 
     // Step 2: Compute pivots using ZigZag with historical_low injection
     const pivots = computePivots(history, pct, minBars, historical_low);
