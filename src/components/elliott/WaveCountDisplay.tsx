@@ -218,19 +218,25 @@ export function WaveCountDisplay({ analysis }: WaveCountDisplayProps) {
               {levels.key_supports && levels.key_supports.length > 0 && (
                 <div>
                   <div className="text-muted-foreground mb-1">Supports</div>
-                  <div className="font-mono">{levels.key_supports.map(s => `$${s.toFixed(2)}`).join(', ')}</div>
+                  <div className="font-mono">
+                    {levels.key_supports.map(s => typeof s === 'number' ? `$${s.toFixed(2)}` : String(s)).join(', ')}
+                  </div>
                 </div>
               )}
               {levels.key_resistances && levels.key_resistances.length > 0 && (
                 <div>
                   <div className="text-muted-foreground mb-1">Resistances</div>
-                  <div className="font-mono">{levels.key_resistances.map(r => `$${r.toFixed(2)}`).join(', ')}</div>
+                  <div className="font-mono">
+                    {levels.key_resistances.map(r => typeof r === 'number' ? `$${r.toFixed(2)}` : String(r)).join(', ')}
+                  </div>
                 </div>
               )}
               {levels.fibonacci_targets && levels.fibonacci_targets.length > 0 && (
                 <div>
                   <div className="text-muted-foreground mb-1">Fib Targets</div>
-                  <div className="font-mono">{levels.fibonacci_targets.map(t => `$${t.toFixed(2)}`).join(', ')}</div>
+                  <div className="font-mono">
+                    {levels.fibonacci_targets.map(t => typeof t === 'number' ? `$${t.toFixed(2)}` : String(t)).join(', ')}
+                  </div>
                 </div>
               )}
               {levels.invalidations && levels.invalidations.length > 0 && (
@@ -239,7 +245,9 @@ export function WaveCountDisplay({ analysis }: WaveCountDisplayProps) {
                     <ShieldAlert className="h-3 w-3 text-destructive" />
                     Invalidations
                   </div>
-                  <div className="font-mono text-destructive">{levels.invalidations.map(i => `$${i.toFixed(2)}`).join(', ')}</div>
+                  <div className="font-mono text-destructive">
+                    {levels.invalidations.map(i => typeof i === 'number' ? `$${i.toFixed(2)}` : String(i)).join(', ')}
+                  </div>
                 </div>
               )}
             </div>
