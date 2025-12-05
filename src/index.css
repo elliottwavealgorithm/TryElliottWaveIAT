@@ -2,65 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* GOX Design System - Dark minimal tech aesthetic */
 
 @layer base {
   :root {
-    /* Clean Business Theme - Light */
-    --background: 0 0% 100%;            /* Pure white */
-    --foreground: 222 84% 4.9%;         /* Dark text */
+    /* GOX Dark Theme - Inspired by logo (white on dark) */
+    --background: 220 15% 8%;             /* Deep dark */
+    --foreground: 0 0% 95%;               /* Off-white text */
 
-    --card: 0 0% 100%;                  /* White cards */
-    --card-foreground: 222 84% 4.9%;
+    --card: 220 15% 10%;                  /* Slightly lighter cards */
+    --card-foreground: 0 0% 95%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222 84% 4.9%;
+    --popover: 220 15% 10%;
+    --popover-foreground: 0 0% 95%;
 
-    /* Brand accents - Professional blue */
-    --primary: 221 83% 53%;             /* #3B82F6 - Professional blue */
-    --primary-foreground: 210 40% 98%;  /* White text on blue */
+    /* Brand - Neutral white accent */
+    --primary: 0 0% 95%;                  /* White - matching logo */
+    --primary-foreground: 220 15% 8%;     /* Dark text on white */
 
-    --secondary: 210 40% 96%;           /* Light gray */
-    --secondary-foreground: 222 84% 4.9%;
+    --secondary: 220 10% 15%;             /* Dark gray */
+    --secondary-foreground: 0 0% 85%;
 
-    --muted: 210 40% 96%;               /* Very light gray */
-    --muted-foreground: 215 13.8% 34.1%; /* Medium gray text */
+    --muted: 220 10% 18%;                 /* Muted background */
+    --muted-foreground: 220 10% 55%;      /* Muted text */
 
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 84% 4.9%;
+    --accent: 220 10% 20%;                /* Accent bg */
+    --accent-foreground: 0 0% 95%;
 
-    --destructive: 0 84% 60%;           /* Red for errors */
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;             /* Red */
+    --destructive-foreground: 0 0% 98%;
 
-    --success: 142 76% 36%;             /* Green for success */
-    --success-foreground: 210 40% 98%;  /* White text on green */
-    --warning: 38 92% 50%;              /* Orange for warnings */
+    --success: 142 71% 45%;               /* Green */
+    --success-foreground: 0 0% 98%;
+    
+    --warning: 38 92% 50%;                /* Amber */
+    --warning-foreground: 0 0% 8%;
 
-    --border: 214 32% 91%;              /* Light border */
-    --input: 214 32% 91%;               /* Light input bg */
-    --ring: 221 83% 53%;                /* Blue focus ring */
+    --border: 220 10% 18%;                /* Subtle border */
+    --input: 220 10% 15%;                 /* Input bg */
+    --ring: 0 0% 80%;                     /* Focus ring */
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
 
     /* Sidebar */
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 84% 4.9%;
-    --sidebar-primary: 221 83% 53%;
-    --sidebar-primary-foreground: 210 40% 98%;
-    --sidebar-accent: 210 40% 96%;
-    --sidebar-accent-foreground: 222 84% 4.9%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 221 83% 53%;
+    --sidebar-background: 220 15% 6%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 0 0% 95%;
+    --sidebar-primary-foreground: 220 15% 8%;
+    --sidebar-accent: 220 10% 12%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 220 10% 15%;
+    --sidebar-ring: 0 0% 80%;
 
-    /* Clean gradients & shadows */
-    --gradient-primary: linear-gradient(135deg, hsl(221 83% 53%), hsl(221 83% 63%));
-    --gradient-surface: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
-    --shadow-elevated: 0 4px 12px -4px hsl(221 83% 53% / 0.15);
-    --shadow-glow: 0 2px 8px hsl(221 83% 53% / 0.15);
+    /* GOX Gradients & Effects */
+    --gradient-primary: linear-gradient(135deg, hsl(0 0% 95%), hsl(0 0% 75%));
+    --gradient-surface: linear-gradient(180deg, hsl(220 15% 8%), hsl(220 15% 6%));
+    --gradient-glow: radial-gradient(ellipse at center, hsl(0 0% 95% / 0.1), transparent 70%);
+    --shadow-elevated: 0 4px 24px -8px hsl(0 0% 0% / 0.5);
+    --shadow-glow: 0 0 40px hsl(0 0% 95% / 0.1);
   }
-
 }
 
 @layer base {
@@ -69,7 +69,17 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
   }
 }
 
@@ -77,33 +87,53 @@ All colors MUST be HSL.
   .story-link {
     @apply relative inline-block after:content-[''] after:absolute after:w-full after:scale-x-0 after:h-0.5 after:bottom-0 after:left-0 after:bg-primary after:origin-bottom-right after:transition-transform after:duration-300 hover:after:scale-x-100 hover:after:origin-bottom-left;
   }
+  
   .hover-scale {
     @apply transition-transform duration-200 hover:scale-105;
   }
+  
   .pulse {
     animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite;
   }
+  
   .shadow-glow {
     box-shadow: var(--shadow-glow);
   }
+  
   .bg-gradient-primary {
     background-image: var(--gradient-primary);
   }
+  
   .bg-gradient-surface {
     background-image: var(--gradient-surface);
   }
+  
+  .bg-gradient-glow {
+    background-image: var(--gradient-glow);
+  }
+  
   .clean-card {
-    @apply bg-card border border-border rounded-lg;
+    @apply bg-card border border-border rounded-xl;
     box-shadow: var(--shadow-elevated);
   }
+  
   .glass-card {
-    @apply bg-card border border-border rounded-lg;
+    @apply bg-card/80 backdrop-blur-xl border border-border/50 rounded-xl;
     box-shadow: var(--shadow-elevated);
   }
+  
   .text-gradient-brand {
     background: var(--gradient-primary);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
+  }
+
+  .gox-glow {
+    text-shadow: 0 0 40px hsl(0 0% 95% / 0.3);
+  }
+
+  .border-glow {
+    box-shadow: 0 0 0 1px hsl(0 0% 95% / 0.1), 0 0 20px hsl(0 0% 95% / 0.05);
   }
 }

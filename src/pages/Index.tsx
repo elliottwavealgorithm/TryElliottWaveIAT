@@ -4,13 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, TrendingUp, Activity } from "lucide-react";
+import { Loader2, TrendingUp, Zap, Bot, ArrowRight, ChevronDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
 import { TimeframeSelector } from "@/components/elliott/TimeframeSelector";
-import { PivotsList } from "@/components/elliott/PivotsList";
 import { WaveCountDisplay } from "@/components/elliott/WaveCountDisplay";
+import goxLogo from "@/assets/gox-logo.png";
 
 interface ElliottAnalysis {
   symbol: string;
@@ -33,7 +33,7 @@ export default function Index() {
     if (!symbol) {
       toast({
         title: "Error",
-        description: "Por favor ingresa un símbolo",
+        description: "Please enter a symbol",
         variant: "destructive",
       });
       return;
@@ -57,7 +57,7 @@ export default function Index() {
       if (error) throw error;
 
       if (!data.success) {
-        throw new Error(data.error || 'Failed to analyze');
+        throw new Error(data.error || 'Analysis failed');
       }
 
       setAnalysis({
@@ -72,19 +72,19 @@ export default function Index() {
       });
 
       toast({
-        title: "Análisis completado",
-        description: `${data.symbol} analizado con ${data.pivots?.length || 0} pivotes detectados`,
+        title: "Analysis Complete",
+        description: `${data.symbol} analyzed with ${data.pivots?.length || 0} pivots detected`,
       });
     } catch (error) {
       console.error('Error:', error);
       setAnalysis(prev => prev ? { ...prev, loading: false } : null);
       
-      let errorMessage = 'Error al generar el análisis';
+      let errorMessage = 'Failed to generate analysis';
       if (error instanceof Error) {
         if (error.message.includes('Rate limit')) {
-          errorMessage = 'Límite de solicitudes alcanzado. Espera unos minutos.';
+          errorMessage = 'Rate limit reached. Please wait a moment.';
         } else if (error.message.includes('Payment required')) {
-          errorMessage = 'Se requiere agregar créditos a Lovable AI.';
+          errorMessage = 'Credits required. Please add funds.';
         } else {
           errorMessage = error.message;
         }
@@ -100,209 +100,263 @@ export default function Index() {
 
   const handleApprove = () => {
     toast({
-      title: "Conteo aprobado",
-      description: "El análisis ha sido guardado",
+      title: "Count Approved",
+      description: "Analysis saved for training",
     });
   };
 
   const handleReject = () => {
     toast({
-      title: "Recalculando",
-      description: "Generando nuevo análisis...",
+      title: "Recalculating",
+      description: "Generating new analysis...",
     });
     analyzeSymbol();
+  };
+
+  const scrollToChart = () => {
+    document.getElementById('chart-section')?.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
     <>
       <Helmet>
-        <title>Impulse Pro - Análisis Elliott Wave con IA</title>
-        <meta name="description" content="Decisiones claras a partir de estructuras complejas del mercado" />
+        <title>GOX – AI-Powered Elliott Wave Analysis</title>
+        <meta name="description" content="GOX is an intelligent agent that analyzes Elliott Wave patterns and will execute trades autonomously." />
         <link rel="canonical" href="/" />
       </Helmet>
 
-      <div className="min-h-screen bg-gradient-surface">
+      <div className="min-h-screen bg-background">
         {/* Header */}
-        <header className="border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-50">
-          <div className="container mx-auto px-4 py-4">
+        <header className="border-b border-border/50 bg-background/80 backdrop-blur-xl sticky top-0 z-50">
+          <div className="container mx-auto px-6 py-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Activity className="h-8 w-8 text-primary" />
-                <div>
-                  <h1 className="text-2xl font-bold text-gradient-brand">Impulse Pro</h1>
-                  <p className="text-xs text-muted-foreground">Decisiones claras a partir de estructuras complejas del mercado</p>
-                </div>
+              <div className="flex items-center gap-4">
+                <img src={goxLogo} alt="GOX" className="h-8 w-auto invert" />
               </div>
-              <Badge variant="outline" className="text-xs">
-                Elliott Wave AI
-              </Badge>
+              <div className="flex items-center gap-4">
+                <Badge variant="outline" className="text-xs font-mono border-primary/30 text-primary/80">
+                  v0.1 alpha
+                </Badge>
+                <Badge className="bg-success/20 text-success border-success/30 text-xs">
+                  <span className="w-1.5 h-1.5 bg-success rounded-full mr-1.5 animate-pulse-glow" />
+                  Agent Online
+                </Badge>
+              </div>
             </div>
           </div>
         </header>
 
-        <main className="container mx-auto px-4 py-8 max-w-[1800px]">
-          <div className="grid gap-6 lg:grid-cols-12">
-            {/* Left Panel - Inputs */}
-            <div className="lg:col-span-3 space-y-4">
-              <Card className="clean-card">
-                <CardHeader>
-                  <CardTitle className="text-sm font-semibold">Configuración</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                      Símbolo
-                    </label>
-                    <Input
-                      value={symbol}
-                      onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                      placeholder="NFLX"
-                      className="font-mono"
-                    />
-                  </div>
+        {/* Hero Section */}
+        <section className="relative py-20 overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-glow opacity-50" />
+          <div className="container mx-auto px-6 relative">
+            <div className="max-w-4xl mx-auto text-center space-y-8">
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-border bg-card/50 backdrop-blur-sm">
+                <Bot className="h-4 w-4 text-primary" />
+                <span className="text-sm text-muted-foreground">AI Trading Agent • Elliott Wave Theory</span>
+              </div>
+              
+              <h1 className="text-5xl md:text-7xl font-bold tracking-tight gox-glow">
+                Autonomous<br />
+                <span className="text-muted-foreground">Wave Analysis</span>
+              </h1>
+              
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+                GOX is an intelligent agent that identifies Elliott Wave patterns, 
+                validates counts with Fibonacci ratios, and will execute trades autonomously.
+              </p>
 
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                      Exchange (opcional)
-                    </label>
-                    <Input
-                      placeholder="NASDAQ"
-                      className="text-sm"
-                      disabled
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <TimeframeSelector 
-                selected={timeframe} 
-                onSelect={setTimeframe} 
-              />
-
-              <Button 
-                onClick={analyzeSymbol}
-                className="w-full"
-                disabled={analysis?.loading}
-              >
-                {analysis?.loading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Analizando...
-                  </>
-                ) : (
-                  <>
-                    <TrendingUp className="h-4 w-4 mr-2" />
-                    Analizar
-                  </>
-                )}
-              </Button>
-
-              {analysis && analysis.pivots.length > 0 && (
-                <PivotsList pivots={analysis.pivots} />
-              )}
-            </div>
-
-            {/* Center Panel - Chart */}
-            <div className="lg:col-span-6 space-y-4">
-              <Card className="clean-card">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="h-5 w-5" />
-                    Gráfico - {symbol || 'Selecciona símbolo'}
-                    {analysis && (
-                      <Badge variant="secondary" className="ml-auto">
-                        ${analysis.lastPrice?.toFixed(2)}
-                      </Badge>
-                    )}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <TradingViewWidget 
-                    symbol={symbol || "NFLX"} 
-                    height={600} 
+              <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+                <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3">
+                  <Input
+                    value={symbol}
+                    onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                    placeholder="SYMBOL"
+                    className="w-28 bg-transparent border-0 font-mono text-lg focus-visible:ring-0 px-0"
                   />
-                </CardContent>
-              </Card>
-
-              {analysis?.timestamp && (
-                <div className="text-xs text-muted-foreground text-center">
-                  Última actualización: {new Date(analysis.timestamp).toLocaleString()}
-                  {' • '}
-                  {analysis.dataPoints} puntos de datos
+                  <div className="w-px h-8 bg-border" />
+                  <TimeframeSelector 
+                    selected={timeframe} 
+                    onSelect={setTimeframe}
+                    compact
+                  />
+                  <Button 
+                    onClick={analyzeSymbol}
+                    disabled={analysis?.loading}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  >
+                    {analysis?.loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        Analyze
+                      </>
+                    )}
+                  </Button>
                 </div>
-              )}
-            </div>
+              </div>
 
-            {/* Right Panel - Results */}
-            <div className="lg:col-span-3 space-y-4">
-              {analysis?.loading ? (
-                <Card className="clean-card">
-                  <CardContent className="py-12 text-center">
-                    <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
-                    <p className="text-sm text-muted-foreground">
-                      Detectando pivotes y analizando ondas...
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : analysis?.analysis ? (
-                <WaveCountDisplay 
-                  analysis={analysis.analysis}
-                  onApprove={handleApprove}
-                  onReject={handleReject}
-                />
-              ) : (
-                <Card className="clean-card">
-                  <CardContent className="py-12 text-center">
-                    <Activity className="h-12 w-12 mx-auto mb-4 opacity-30 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground mb-2">
-                      Ingresa un símbolo y presiona Analizar
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      El algoritmo ZigZag detectará pivotes automáticamente
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Info Card */}
-              <Card className="clean-card bg-muted/30">
-                <CardHeader>
-                  <CardTitle className="text-xs font-semibold">ℹ️ Cómo funciona</CardTitle>
-                </CardHeader>
-                <CardContent className="text-xs text-muted-foreground space-y-2">
-                  <p>1. Algoritmo ZigZag detecta pivotes de precio</p>
-                  <p>2. IA analiza patrones de Elliott Wave</p>
-                  <p>3. Genera conteos impulsivos y correctivos</p>
-                  <p>4. Valida con puntos de invalidación</p>
-                </CardContent>
-              </Card>
+              <button 
+                onClick={scrollToChart}
+                className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mt-8"
+              >
+                <span className="text-sm">View Chart</span>
+                <ChevronDown className="h-4 w-4 animate-float" />
+              </button>
             </div>
           </div>
+        </section>
 
-          {/* Admin Logs (Hidden by default) */}
-          <details className="mt-8">
-            <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors p-4 bg-muted/20 rounded-lg">
-              📋 Logs / Auditoría (Admin)
-            </summary>
-            {analysis && (
-              <Card className="clean-card mt-4">
-                <CardContent className="p-4">
-                  <pre className="text-xs overflow-x-auto">
-                    {JSON.stringify({
-                      symbol: analysis.symbol,
-                      timeframe: analysis.timeframe,
-                      pivots_count: analysis.pivots.length,
-                      model: "google/gemini-2.5-flash",
-                      timestamp: analysis.timestamp,
-                      analysis: analysis.analysis
-                    }, null, 2)}
-                  </pre>
-                </CardContent>
-              </Card>
-            )}
-          </details>
-        </main>
+        {/* Features */}
+        <section className="py-16 border-t border-border/50">
+          <div className="container mx-auto px-6">
+            <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              <FeatureCard 
+                icon={<TrendingUp className="h-5 w-5" />}
+                title="Wave Detection"
+                description="ZigZag algorithm identifies significant price pivots for accurate wave counts."
+                status="Active"
+              />
+              <FeatureCard 
+                icon={<Bot className="h-5 w-5" />}
+                title="AI Analysis"
+                description="LLM validates Elliott Wave rules and Fibonacci relationships."
+                status="Active"
+              />
+              <FeatureCard 
+                icon={<Zap className="h-5 w-5" />}
+                title="Auto Trading"
+                description="Execute trades based on wave count invalidations and targets."
+                status="Coming Soon"
+                disabled
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Analysis Results */}
+        {(analysis?.loading || analysis?.analysis) && (
+          <section className="py-16 border-t border-border/50">
+            <div className="container mx-auto px-6">
+              <div className="max-w-4xl mx-auto">
+                {analysis.loading ? (
+                  <Card className="clean-card">
+                    <CardContent className="py-16 text-center">
+                      <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
+                      <p className="text-muted-foreground">
+                        Detecting pivots and analyzing wave structure...
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : analysis.analysis && (
+                  <WaveCountDisplay 
+                    analysis={analysis.analysis}
+                    onApprove={handleApprove}
+                    onReject={handleReject}
+                  />
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Full Width Chart Section */}
+        <section id="chart-section" className="py-16 border-t border-border/50">
+          <div className="px-4">
+            <div className="mb-8 text-center">
+              <h2 className="text-2xl font-semibold mb-2">Live Chart</h2>
+              <p className="text-muted-foreground text-sm">
+                {symbol} • Real-time data from TradingView
+              </p>
+            </div>
+            <div className="max-w-[1800px] mx-auto">
+              <div className="clean-card overflow-hidden">
+                <TradingViewWidget 
+                  symbol={symbol || "NFLX"} 
+                  height={700}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <footer className="py-12 border-t border-border/50">
+          <div className="container mx-auto px-6">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <img src={goxLogo} alt="GOX" className="h-6 w-auto invert opacity-50" />
+                <span className="text-sm text-muted-foreground">
+                  AI Research Project
+                </span>
+              </div>
+              <div className="flex items-center gap-6 text-sm text-muted-foreground">
+                <span>Elliott Wave Theory + Machine Learning</span>
+                <span>•</span>
+                <span>2025</span>
+              </div>
+            </div>
+          </div>
+        </footer>
+
+        {/* Admin Logs (Hidden) */}
+        <details className="container mx-auto px-6 pb-8">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors p-4 bg-card/50 rounded-lg border border-border/50">
+            Debug Logs (Admin)
+          </summary>
+          {analysis && (
+            <Card className="clean-card mt-4">
+              <CardContent className="p-4">
+                <pre className="text-xs overflow-x-auto font-mono text-muted-foreground">
+                  {JSON.stringify({
+                    symbol: analysis.symbol,
+                    timeframe: analysis.timeframe,
+                    pivots_count: analysis.pivots.length,
+                    model: "google/gemini-2.5-flash",
+                    timestamp: analysis.timestamp,
+                    analysis: analysis.analysis
+                  }, null, 2)}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+        </details>
       </div>
     </>
+  );
+}
+
+function FeatureCard({ 
+  icon, 
+  title, 
+  description, 
+  status, 
+  disabled 
+}: { 
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  status: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={`clean-card p-6 space-y-4 ${disabled ? 'opacity-50' : ''}`}>
+      <div className="flex items-center justify-between">
+        <div className="p-2 rounded-lg bg-muted">
+          {icon}
+        </div>
+        <Badge 
+          variant="outline" 
+          className={`text-xs ${disabled ? 'border-muted-foreground/30' : 'border-success/30 text-success'}`}
+        >
+          {status}
+        </Badge>
+      </div>
+      <div>
+        <h3 className="font-semibold mb-1">{title}</h3>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+    </div>
   );
 }
