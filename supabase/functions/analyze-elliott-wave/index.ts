@@ -285,7 +285,7 @@ serve(async (req) => {
       );
     }
 
-    const { symbol, timeframe = "1d", pct = 3.0, minBars = 5 } = await req.json();
+    const { symbol, timeframe = "1d", pct = 3.0, minBars = 5, candles, historical_low: providedHistoricalLow } = await req.json();
 
     if (!symbol) {
       return new Response(
@@ -297,50 +297,71 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Analyzing Elliott Wave for ${symbol}, timeframe: ${timeframe}`);
+    // Normalize timeframe to lowercase for Yahoo Finance API
+    const normalizedTimeframe = timeframe.toLowerCase();
+    console.log(`Analyzing Elliott Wave for ${symbol}, timeframe: ${normalizedTimeframe}`);
 
-    // Step 1: Fetch OHLCV data
-    const ohlcvUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=max&interval=${timeframe}`;
-    const ohlcvResp = await fetch(ohlcvUrl);
-    
-    if (!ohlcvResp.ok) {
-      throw new Error(`Failed to fetch data for ${symbol}`);
+    let history = [];
+    let historical_low = providedHistoricalLow;
+
+    // If candles are provided, use them directly
+    if (candles && candles.length > 0) {
+      console.log(`Using ${candles.length} provided candles`);
+      history = candles.map((c: any) => ({
+        date: c.date,
+        timestamp: new Date(c.date).getTime() / 1000,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume || 0
+      }));
+    } else {
+      // Step 1: Fetch OHLCV data from Yahoo Finance
+      const ohlcvUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=max&interval=${normalizedTimeframe}`;
+      console.log(`Fetching from Yahoo: ${ohlcvUrl}`);
+      const ohlcvResp = await fetch(ohlcvUrl);
+      
+      if (!ohlcvResp.ok) {
+        const errorText = await ohlcvResp.text();
+        console.error(`Yahoo Finance error: ${ohlcvResp.status}`, errorText);
+        throw new Error(`Failed to fetch data for ${symbol}: ${ohlcvResp.status}`);
+      }
+
+      const ohlcvData = await ohlcvResp.json();
+      const result = ohlcvData.chart?.result?.[0];
+      
+      if (!result) {
+        throw new Error('No chart data available');
+      }
+
+      const timestamps = result.timestamp;
+      const quote = result.indicators?.quote?.[0];
+
+      for (let i = 0; i < timestamps.length; i++) {
+        if (quote.open[i] === null) continue;
+        history.push({
+          date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+          timestamp: timestamps[i],
+          open: quote.open[i],
+          high: quote.high[i],
+          low: quote.low[i],
+          close: quote.close[i],
+          volume: quote.volume[i]
+        });
+      }
+      console.log(`Fetched ${history.length} data points from Yahoo`);
     }
 
-    const ohlcvData = await ohlcvResp.json();
-    const result = ohlcvData.chart?.result?.[0];
-    
-    if (!result) {
-      throw new Error('No chart data available');
-    }
-
-    const timestamps = result.timestamp;
-    const quote = result.indicators?.quote?.[0];
-
-    const history = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      if (quote.open[i] === null) continue;
-      history.push({
-        date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
-        timestamp: timestamps[i],
-        open: quote.open[i],
-        high: quote.high[i],
-        low: quote.low[i],
-        close: quote.close[i],
-        volume: quote.volume[i]
-      });
-    }
-
-    console.log(`Fetched ${history.length} data points`);
-
-    // Calculate historical low (lowest low in entire dataset)
-    let historical_low = null;
-    for (const candle of history) {
-      if (historical_low === null || candle.low < historical_low.price) {
-        historical_low = { 
-          price: candle.low, 
-          date: candle.date 
-        };
+    // Calculate historical low if not provided
+    if (!historical_low) {
+      for (const candle of history) {
+        if (historical_low === null || candle.low < historical_low.price) {
+          historical_low = { 
+            price: candle.low, 
+            date: candle.date 
+          };
+        }
       }
     }
     
