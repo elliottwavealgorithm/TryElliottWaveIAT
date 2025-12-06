@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, TrendingUp, Zap, Bot, ChevronDown } from "lucide-react";
+import { Loader2, TrendingUp, Zap, Bot, ChevronDown, Mail, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
@@ -28,7 +28,54 @@ export default function Index() {
   const [symbol, setSymbol] = useState("NFLX");
   const [timeframe, setTimeframe] = useState("1d");
   const [analysis, setAnalysis] = useState<ElliottAnalysis | null>(null);
+  const [waitlistEmail, setWaitlistEmail] = useState("");
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
   const { toast } = useToast();
+
+  const joinWaitlist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!waitlistEmail || !waitlistEmail.includes('@')) {
+      toast({
+        title: "Invalid email",
+        description: "Please enter a valid email address",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setWaitlistLoading(true);
+    try {
+      const { error } = await supabase
+        .from('waitlist')
+        .insert({ email: waitlistEmail });
+
+      if (error) {
+        if (error.code === '23505') {
+          toast({
+            title: "Already registered",
+            description: "This email is already on the waitlist",
+          });
+        } else {
+          throw error;
+        }
+      } else {
+        toast({
+          title: "You're on the list!",
+          description: "We'll notify you when GOX launches",
+        });
+        setWaitlistEmail("");
+      }
+    } catch (error) {
+      console.error('Waitlist error:', error);
+      toast({
+        title: "Error",
+        description: "Failed to join waitlist. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setWaitlistLoading(false);
+    }
+  };
 
   const analyzeSymbol = async () => {
     if (!symbol) {
@@ -151,6 +198,34 @@ export default function Index() {
                 GOX is an intelligent agent that identifies Elliott Wave structures, 
                 validates counts, and execute trades autonomously.
               </p>
+
+              {/* Waitlist Form */}
+              <form onSubmit={joinWaitlist} className="flex flex-col sm:flex-row gap-3 justify-center max-w-md mx-auto">
+                <div className="flex-1 relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="email"
+                    value={waitlistEmail}
+                    onChange={(e) => setWaitlistEmail(e.target.value)}
+                    placeholder="Enter your email"
+                    className="pl-10 bg-card border-border"
+                  />
+                </div>
+                <Button 
+                  type="submit"
+                  disabled={waitlistLoading}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {waitlistLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      Join Waitlist
+                      <ArrowRight className="h-4 w-4 ml-2" />
+                    </>
+                  )}
+                </Button>
+              </form>
 
               <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
                 <div className="flex items-center gap-3 bg-card border border-border rounded-xl px-4 py-3">
