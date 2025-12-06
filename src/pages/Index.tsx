@@ -126,13 +126,7 @@ export default function Index() {
                 <img src={goxLogo} alt="GOX" className="h-8 w-auto invert" />
               </div>
               <div className="flex items-center gap-4">
-                <Badge variant="outline" className="text-xs font-mono border-primary/30 text-primary/80">
-                  v0.1 alpha
-                </Badge>
-                <Badge className="bg-success/20 text-success border-success/30 text-xs">
-                  <span className="w-1.5 h-1.5 bg-success rounded-full mr-1.5 animate-pulse-glow" />
-                  Agent Online
-                </Badge>
+                {/* Reserved for future navigation */}
               </div>
             </div>
           </div>
@@ -154,8 +148,8 @@ export default function Index() {
               </h1>
               
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                GOX is an intelligent agent that identifies Elliott Wave patterns, 
-                validates counts with Fibonacci ratios, and will execute trades autonomously.
+                GOX is an intelligent agent that identifies Elliott Wave structures, 
+                validates counts, and execute trades autonomously.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
@@ -286,11 +280,6 @@ export default function Index() {
                 <span className="text-sm text-muted-foreground">
                   AI Research Project
                 </span>
-              </div>
-              <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                <span>Elliott Wave Theory + Machine Learning</span>
-                <span>•</span>
-                <span>2025</span>
               </div>
             </div>
           </div>
