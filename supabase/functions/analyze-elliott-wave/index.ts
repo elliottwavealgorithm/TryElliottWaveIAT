@@ -439,7 +439,7 @@ serve(async (req) => {
             details: 'Verify the symbol exists on Yahoo Finance'
           }),
           { 
-            status: 404,
+            status: 200, // Return 200 so client can read the data
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           }
         );
