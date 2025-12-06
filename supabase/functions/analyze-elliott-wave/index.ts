@@ -413,7 +413,36 @@ serve(async (req) => {
       if (!ohlcvResp.ok) {
         const errorText = await ohlcvResp.text();
         console.error(`Yahoo Finance error: ${ohlcvResp.status}`, errorText);
-        throw new Error(`Failed to fetch data for ${symbol}: ${ohlcvResp.status}`);
+        
+        // Parse error for better user feedback
+        let userMessage = `Symbol "${symbol}" not found`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.chart?.error?.description) {
+            userMessage = errorJson.chart.error.description;
+          }
+        } catch {}
+        
+        // Provide helpful suggestions
+        const suggestions = [];
+        if (!symbol.includes('.')) {
+          suggestions.push(`For Mexican stocks, try adding ".MX" (e.g., ${symbol}.MX)`);
+          suggestions.push(`For US stocks, use the standard ticker (e.g., AAPL, MSFT)`);
+        }
+        
+        return new Response(
+          JSON.stringify({ 
+            success: false,
+            error: userMessage,
+            symbol: symbol,
+            suggestions: suggestions.length > 0 ? suggestions : undefined,
+            details: 'Verify the symbol exists on Yahoo Finance'
+          }),
+          { 
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          }
+        );
       }
 
       const ohlcvData = await ohlcvResp.json();
