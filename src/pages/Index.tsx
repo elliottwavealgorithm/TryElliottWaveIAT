@@ -102,13 +102,27 @@ export default function Index() {
         body: { symbol, timeframe }
       });
 
-      if (error) throw error;
+      // Handle edge function errors (including 404)
+      if (error) {
+        // Try to parse error context for suggestions
+        const errorContext = (error as any)?.context;
+        if (errorContext?.suggestions) {
+          toast({
+            title: `Symbol "${symbol}" not found`,
+            description: errorContext.suggestions[0],
+            variant: "destructive",
+          });
+          setAnalysis(prev => prev ? { ...prev, loading: false } : null);
+          return;
+        }
+        throw error;
+      }
 
-      if (!data.success) {
-        // Handle symbol not found with suggestions
+      // Handle non-success responses in data
+      if (data && !data.success) {
         if (data.suggestions && data.suggestions.length > 0) {
           toast({
-            title: `Symbol "${data.symbol}" not found`,
+            title: `Symbol "${data.symbol || symbol}" not found`,
             description: data.suggestions[0],
             variant: "destructive",
           });
@@ -133,16 +147,20 @@ export default function Index() {
         title: "Analysis Complete",
         description: `${data.symbol} analyzed with ${data.pivots?.length || 0} pivots detected`,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
       setAnalysis(prev => prev ? { ...prev, loading: false } : null);
       
       let errorMessage = 'Failed to generate analysis';
-      if (error instanceof Error) {
+      
+      // Try to extract meaningful error message
+      if (error?.message) {
         if (error.message.includes('Rate limit')) {
           errorMessage = 'Rate limit reached. Please wait a moment.';
         } else if (error.message.includes('Payment required')) {
           errorMessage = 'Credits required. Please add funds.';
+        } else if (error.message.includes('not found') || error.message.includes('No data')) {
+          errorMessage = `Symbol "${symbol}" not found. Try with .MX suffix for Mexican stocks.`;
         } else {
           errorMessage = error.message;
         }
