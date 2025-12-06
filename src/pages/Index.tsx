@@ -105,6 +105,16 @@ export default function Index() {
       if (error) throw error;
 
       if (!data.success) {
+        // Handle symbol not found with suggestions
+        if (data.suggestions && data.suggestions.length > 0) {
+          toast({
+            title: `Symbol "${data.symbol}" not found`,
+            description: data.suggestions[0],
+            variant: "destructive",
+          });
+          setAnalysis(prev => prev ? { ...prev, loading: false } : null);
+          return;
+        }
         throw new Error(data.error || 'Analysis failed');
       }
 
