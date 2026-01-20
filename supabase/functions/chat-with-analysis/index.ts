@@ -130,6 +130,12 @@ serve(async (req) => {
     let content = data.choices?.[0]?.message?.content || '';
 
     console.log('LLM response length:', content.length);
+    console.log('LLM response preview:', content.substring(0, 200));
+    
+    // Ensure we always have a valid response
+    if (!content || content.trim() === '') {
+      content = "I apologize, but I wasn't able to generate a response. Please try rephrasing your question.";
+    }
 
     // Check if the response contains an updated analysis
     let updatedAnalysis = null;
