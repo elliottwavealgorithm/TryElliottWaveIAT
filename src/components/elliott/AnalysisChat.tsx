@@ -39,9 +39,8 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
   }, [analysis, symbol]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    // Scroll to bottom when messages change
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
 
   const sendMessage = async () => {
@@ -68,11 +67,19 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
         }
       });
 
-      if (error) throw error;
+      console.log('Chat response:', { data, error });
 
+      if (error) throw error;
+      
+      if (!data) {
+        throw new Error('No response received from the server');
+      }
+
+      const responseContent = data.response || data.message || "I've processed your request.";
+      
       const assistantMessage: Message = {
         role: "assistant",
-        content: data.response,
+        content: responseContent,
         timestamp: new Date()
       };
 
@@ -125,7 +132,7 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Messages */}
-        <ScrollArea className="h-[300px] pr-4" ref={scrollRef}>
+        <ScrollArea className="h-[300px] pr-4">
           <div className="space-y-4">
             {messages.map((message, idx) => (
               <div
@@ -166,6 +173,7 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
                 </div>
               </div>
             )}
+            <div ref={scrollRef} />
           </div>
         </ScrollArea>
 
