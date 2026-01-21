@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { Brain, ChartCandlestick, Home, ShoppingBag, Zap } from "lucide-react";
+import { Brain, ChartCandlestick, Home, ShoppingBag, Zap, BarChart3 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +20,7 @@ export function AppSidebar() {
   const items = [
     { title: t('navigation.dashboard'), url: "/", icon: Home },
     { title: t('navigation.analysis'), url: "/analysis", icon: ChartCandlestick },
+    { title: "Screener", url: "/screener", icon: BarChart3 },
     { title: t('navigation.training'), url: "/training", icon: Brain },
     { title: t('navigation.pricing'), url: "/pricing", icon: ShoppingBag },
   ];
