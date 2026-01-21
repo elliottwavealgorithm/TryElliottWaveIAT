@@ -116,6 +116,151 @@ export type Database = {
         }
         Relationships: []
       }
+      scans: {
+        Row: {
+          completed_at: string | null
+          completed_count: number | null
+          created_at: string
+          id: string
+          params: Json
+          results_summary: Json | null
+          status: string
+          symbols_count: number | null
+          user_id: string
+          watchlist_id: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_count?: number | null
+          created_at?: string
+          id?: string
+          params?: Json
+          results_summary?: Json | null
+          status?: string
+          symbols_count?: number | null
+          user_id: string
+          watchlist_id?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          completed_count?: number | null
+          created_at?: string
+          id?: string
+          params?: Json
+          results_summary?: Json | null
+          status?: string
+          symbols_count?: number | null
+          user_id?: string
+          watchlist_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scans_watchlist_id_fkey"
+            columns: ["watchlist_id"]
+            isOneToOne: false
+            referencedRelation: "watchlists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      symbol_analysis: {
+        Row: {
+          alternates: Json | null
+          cage_features: Json | null
+          created_at: string
+          data_hash: string | null
+          evidence_score: number | null
+          fundamentals: Json | null
+          id: string
+          levels: Json | null
+          pre_filter_score: number | null
+          primary_count: Json | null
+          raw_analysis: Json | null
+          scan_id: string | null
+          symbol: string
+          timeframe_set: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          alternates?: Json | null
+          cage_features?: Json | null
+          created_at?: string
+          data_hash?: string | null
+          evidence_score?: number | null
+          fundamentals?: Json | null
+          id?: string
+          levels?: Json | null
+          pre_filter_score?: number | null
+          primary_count?: Json | null
+          raw_analysis?: Json | null
+          scan_id?: string | null
+          symbol: string
+          timeframe_set?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          alternates?: Json | null
+          cage_features?: Json | null
+          created_at?: string
+          data_hash?: string | null
+          evidence_score?: number | null
+          fundamentals?: Json | null
+          id?: string
+          levels?: Json | null
+          pre_filter_score?: number | null
+          primary_count?: Json | null
+          raw_analysis?: Json | null
+          scan_id?: string | null
+          symbol?: string
+          timeframe_set?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "symbol_analysis_scan_id_fkey"
+            columns: ["scan_id"]
+            isOneToOne: false
+            referencedRelation: "scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_adjustments: {
+        Row: {
+          adjustment_json: Json
+          created_at: string
+          id: string
+          notes: string | null
+          symbol: string
+          timeframe: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          adjustment_json: Json
+          created_at?: string
+          id?: string
+          notes?: string | null
+          symbol: string
+          timeframe?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          adjustment_json?: Json
+          created_at?: string
+          id?: string
+          notes?: string | null
+          symbol?: string
+          timeframe?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       waitlist: {
         Row: {
           created_at: string
@@ -137,6 +282,68 @@ export type Database = {
           id?: string
           notes?: string | null
           source?: string | null
+        }
+        Relationships: []
+      }
+      watchlist_symbols: {
+        Row: {
+          added_at: string
+          id: string
+          notes: string | null
+          symbol: string
+          watchlist_id: string
+        }
+        Insert: {
+          added_at?: string
+          id?: string
+          notes?: string | null
+          symbol: string
+          watchlist_id: string
+        }
+        Update: {
+          added_at?: string
+          id?: string
+          notes?: string | null
+          symbol?: string
+          watchlist_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "watchlist_symbols_watchlist_id_fkey"
+            columns: ["watchlist_id"]
+            isOneToOne: false
+            referencedRelation: "watchlists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      watchlists: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_default: boolean | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_default?: boolean | null
+          name?: string
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
