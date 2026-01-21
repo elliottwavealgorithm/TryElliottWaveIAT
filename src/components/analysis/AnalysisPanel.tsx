@@ -24,7 +24,8 @@ interface AnalysisPanelProps {
   fundamentals: FundamentalsSnapshot | null;
   isLoading: boolean;
   onRefresh: () => void;
-  onSelectAlternate?: (index: number) => void;
+  onSelectAlternate?: (index: number | null) => void;
+  selectedAlternateIndex?: number | null;
 }
 
 export function AnalysisPanel({ 
@@ -32,7 +33,8 @@ export function AnalysisPanel({
   fundamentals, 
   isLoading, 
   onRefresh,
-  onSelectAlternate 
+  onSelectAlternate,
+  selectedAlternateIndex = null
 }: AnalysisPanelProps) {
   const [activeTab, setActiveTab] = useState('primary');
 
@@ -223,6 +225,24 @@ export function AnalysisPanel({
 
         {/* Alternates Tab */}
         <TabsContent value="alternates" className="mt-0 space-y-3">
+          {/* Reset to Primary button when alternate is selected */}
+          {selectedAlternateIndex !== null && (
+            <div className="flex items-center justify-between p-2 bg-purple-500/10 rounded-md border border-purple-500/30">
+              <span className="text-xs text-purple-400 flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                Alt #{selectedAlternateIndex + 1} overlay active
+              </span>
+              <Button 
+                size="sm" 
+                variant="ghost" 
+                className="h-6 text-xs text-purple-400 hover:text-purple-300"
+                onClick={() => onSelectAlternate?.(null)}
+              >
+                Reset to Primary
+              </Button>
+            </div>
+          )}
+          
           {analysis.alternate_counts.length === 0 ? (
             <Card className="border-border/50">
               <CardContent className="pt-4 text-center text-muted-foreground">
@@ -230,24 +250,45 @@ export function AnalysisPanel({
               </CardContent>
             </Card>
           ) : (
-            analysis.alternate_counts.map((alt, idx) => (
-              <Card 
-                key={idx} 
-                className="border-border/50 cursor-pointer hover:bg-muted/30 transition-colors"
-                onClick={() => onSelectAlternate?.(idx)}
-              >
-                <CardContent className="pt-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{alt.label}</span>
-                    <Badge variant="secondary">{alt.probability}%</Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{alt.justification}</p>
-                  <p className="text-xs">
-                    <span className="text-primary">Key difference:</span> {alt.key_difference}
-                  </p>
-                </CardContent>
-              </Card>
-            ))
+            analysis.alternate_counts.map((alt, idx) => {
+              const hasWaves = alt.waves && alt.waves.length > 0;
+              const isSelected = selectedAlternateIndex === idx;
+              
+              return (
+                <Card 
+                  key={idx} 
+                  className={`border-border/50 cursor-pointer transition-colors ${
+                    isSelected 
+                      ? 'bg-purple-500/20 border-purple-500/50' 
+                      : 'hover:bg-muted/30'
+                  } ${!hasWaves ? 'opacity-60' : ''}`}
+                  onClick={() => hasWaves && onSelectAlternate?.(isSelected ? null : idx)}
+                >
+                  <CardContent className="pt-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{alt.label}</span>
+                        {hasWaves && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">
+                            {isSelected ? 'Active' : 'Click to overlay'}
+                          </span>
+                        )}
+                      </div>
+                      <Badge variant="secondary">{alt.probability}%</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{alt.justification}</p>
+                    <p className="text-xs">
+                      <span className="text-primary">Key difference:</span> {alt.key_difference}
+                    </p>
+                    {!hasWaves && (
+                      <p className="text-[10px] text-muted-foreground italic">
+                        No wave data available for overlay
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })
           )}
 
           {/* Key Uncertainties */}

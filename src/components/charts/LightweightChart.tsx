@@ -212,13 +212,14 @@ export function LightweightChart({
   const activeWavePoints: WavePoint[] = useMemo(() => {
     if (!analysis) return [];
     
-    // If alternate selected and has wave data (check if alternate has waves)
-    if (selectedAlternateIndex !== null && analysis.alternate_counts[selectedAlternateIndex]) {
-      // Alternates typically don't have full wave points in this schema
-      // Fall back to primary
-      return analysis.primary_count?.waves || [];
+    // If alternate selected and has wave data, use alternate waves
+    if (selectedAlternateIndex !== null && 
+        analysis.alternate_counts[selectedAlternateIndex]?.waves &&
+        analysis.alternate_counts[selectedAlternateIndex].waves!.length > 0) {
+      return analysis.alternate_counts[selectedAlternateIndex].waves!;
     }
     
+    // Default to primary count waves
     return analysis.primary_count?.waves || [];
   }, [analysis, selectedAlternateIndex]);
 

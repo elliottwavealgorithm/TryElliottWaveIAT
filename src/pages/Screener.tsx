@@ -70,8 +70,8 @@ export default function Screener() {
     }
   }, []);
 
-  const handleSelectAlternate = useCallback((index: number) => {
-    setSelectedAlternateIndex(prev => prev === index ? null : index);
+  const handleSelectAlternate = useCallback((index: number | null) => {
+    setSelectedAlternateIndex(index);
   }, []);
 
   const handleAdjustmentConfirm = useCallback(async (adjustments: WaveAdjustment[]) => {
@@ -175,6 +175,7 @@ export default function Screener() {
               isLoading={isLoading || isAdjusting}
               onRefresh={() => selectedSymbol && analyzeSymbol(selectedSymbol)}
               onSelectAlternate={handleSelectAlternate}
+              selectedAlternateIndex={selectedAlternateIndex}
             />
           </div>
         </div>
