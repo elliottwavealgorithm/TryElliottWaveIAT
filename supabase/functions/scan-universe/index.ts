@@ -1,6 +1,8 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+const API_VERSION = "0.2";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -20,8 +22,18 @@ interface Candle {
   volume: number;
 }
 
+interface Pivot {
+  index: number;
+  type: 'high' | 'low';
+  price: number;
+  date: string;
+  prominence: number;
+  scale: 'macro' | 'meso' | 'micro';
+}
+
 interface SymbolMetrics {
   symbol: string;
+  shortName?: string;
   liquidity_score: number;
   volatility_score: number;
   regime: 'trending' | 'ranging' | 'unknown';
@@ -30,6 +42,10 @@ interface SymbolMetrics {
   last_price: number;
   avg_volume_30d: number;
   atr_pct: number;
+  // Deep precheck fields (only for topN)
+  ew_structural_score?: number;
+  ew_ready?: boolean;
+  ew_notes?: string;
   fundamentals?: FundamentalsSnapshot;
   error?: string;
 }
@@ -52,10 +68,12 @@ interface ScanRequest {
   deep_timeframes?: string[];
   topN?: number;
   include_fundamentals?: boolean;
+  run_deep_precheck?: boolean;
 }
 
 interface ScanResult {
   scan_id: string;
+  api_version: string;
   total_symbols: number;
   processed: number;
   failed: number;
@@ -93,7 +111,7 @@ async function fetchOHLCV(symbol: string, interval: string): Promise<Candle[]> {
   const cached = getCached<Candle[]>(cacheKey);
   if (cached) return cached;
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1y&interval=${interval === '1W' ? '1wk' : '1d'}`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=2y&interval=${interval === '1W' ? '1wk' : '1d'}`;
   
   const response = await fetch(url);
   if (!response.ok) {
@@ -124,7 +142,7 @@ async function fetchOHLCV(symbol: string, interval: string): Promise<Candle[]> {
     });
   }
 
-  setCache(cacheKey, candles, 5 * 60 * 1000); // 5 min cache
+  setCache(cacheKey, candles, 5 * 60 * 1000);
   return candles;
 }
 
@@ -134,18 +152,36 @@ async function fetchFundamentals(symbol: string): Promise<FundamentalsSnapshot> 
   if (cached) return cached;
 
   try {
+    // Use quote endpoint for shortName + basic stats
+    const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
+    const quoteResponse = await fetch(quoteUrl);
+    let shortName: string | null = null;
+    let marketCap: number | null = null;
+    let trailingPE: number | null = null;
+    
+    if (quoteResponse.ok) {
+      const quoteData = await quoteResponse.json();
+      const quote = quoteData.quoteResponse?.result?.[0];
+      if (quote) {
+        shortName = quote.shortName || quote.longName || null;
+        marketCap = quote.marketCap || null;
+        trailingPE = quote.trailingPE || null;
+      }
+    }
+
+    // Fetch detailed fundamentals
     const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=summaryProfile,defaultKeyStatistics,financialData,calendarEvents`;
     
     const response = await fetch(url);
     if (!response.ok) {
       console.log(`Fundamentals not available for ${symbol}`);
-      return getEmptyFundamentals();
+      return { ...getEmptyFundamentals(), shortName };
     }
 
     const data = await response.json();
     const result = data.quoteSummary?.result?.[0];
     
-    if (!result) return getEmptyFundamentals();
+    if (!result) return { ...getEmptyFundamentals(), shortName };
 
     const profile = result.summaryProfile || {};
     const keyStats = result.defaultKeyStatistics || {};
@@ -153,18 +189,18 @@ async function fetchFundamentals(symbol: string): Promise<FundamentalsSnapshot> 
     const calendar = result.calendarEvents || {};
 
     const fundamentals: FundamentalsSnapshot = {
-      marketCap: keyStats.marketCap?.raw || financialData.marketCap?.raw || null,
-      trailingPE: keyStats.trailingPE?.raw || null,
+      marketCap: marketCap || keyStats.marketCap?.raw || financialData.marketCap?.raw || null,
+      trailingPE: trailingPE || keyStats.trailingPE?.raw || null,
       forwardPE: keyStats.forwardPE?.raw || null,
       revenueGrowth: financialData.revenueGrowth?.raw || null,
       earningsGrowth: financialData.earningsGrowth?.raw || null,
       nextEarningsDate: calendar.earnings?.earningsDate?.[0]?.fmt || null,
       sector: profile.sector || null,
       industry: profile.industry || null,
-      shortName: null // Will be filled from quote data
+      shortName
     };
 
-    setCache(cacheKey, fundamentals, 60 * 60 * 1000); // 1 hour cache
+    setCache(cacheKey, fundamentals, 60 * 60 * 1000);
     return fundamentals;
   } catch (error) {
     console.error(`Error fetching fundamentals for ${symbol}:`, error);
@@ -187,7 +223,7 @@ function getEmptyFundamentals(): FundamentalsSnapshot {
 }
 
 // ============================================================================
-// SECTION 4: TECHNICAL ANALYSIS FOR SCREENING
+// SECTION 4: TECHNICAL ANALYSIS - ADAPTIVE ZIGZAG
 // ============================================================================
 
 function calculateATR(candles: Candle[], period = 14): number {
@@ -208,7 +244,7 @@ function calculateATR(candles: Candle[], period = 14): number {
 }
 
 function calculateADX(candles: Candle[], period = 14): number {
-  if (candles.length < period * 2) return 25; // Default neutral
+  if (candles.length < period * 2) return 25;
   
   const plusDM: number[] = [];
   const minusDM: number[] = [];
@@ -229,7 +265,6 @@ function calculateADX(candles: Candle[], period = 14): number {
     trs.push(tr);
   }
   
-  // Smooth the values
   const smooth = (arr: number[], p: number) => {
     const result: number[] = [];
     let sum = arr.slice(0, p).reduce((a, b) => a + b, 0);
@@ -258,42 +293,255 @@ function calculateADX(candles: Candle[], period = 14): number {
   
   if (dx.length < period) return 25;
   
-  // ADX is smoothed DX
   const recentDX = dx.slice(-period);
   return recentDX.reduce((a, b) => a + b, 0) / recentDX.length;
 }
 
-function detectPivots(candles: Candle[], threshold: number): number[] {
-  const pivots: number[] = [];
-  if (candles.length < 5) return pivots;
-  
-  for (let i = 2; i < candles.length - 2; i++) {
-    const isHigh = candles[i].high > candles[i - 1].high &&
-                   candles[i].high > candles[i - 2].high &&
-                   candles[i].high > candles[i + 1].high &&
-                   candles[i].high > candles[i + 2].high;
-    
-    const isLow = candles[i].low < candles[i - 1].low &&
-                  candles[i].low < candles[i - 2].low &&
-                  candles[i].low < candles[i + 1].low &&
-                  candles[i].low < candles[i + 2].low;
-    
-    if (isHigh || isLow) {
-      // Check if significant (above threshold)
-      const move = isHigh
-        ? (candles[i].high - Math.min(candles[i - 2].low, candles[i + 2].low)) / candles[i].high * 100
-        : (Math.max(candles[i - 2].high, candles[i + 2].high) - candles[i].low) / candles[i].low * 100;
-      
-      if (move >= threshold) {
-        pivots.push(i);
-      }
+// Adaptive ZigZag with ATR-based thresholds (same approach as analyze-elliott-wave)
+function computeAdaptiveZigZag(
+  candles: Candle[],
+  thresholdPct: number,
+  minBars: number,
+  atr: number,
+  minSwingATRMultiple: number,
+  scale: 'macro' | 'meso' | 'micro'
+): Pivot[] {
+  if (candles.length < minBars) return [];
+
+  const highs = candles.map(c => c.high);
+  const lows = candles.map(c => c.low);
+  const n = candles.length;
+  const minSwing = atr * minSwingATRMultiple;
+
+  let lastPivotIdx = 0;
+  let lastHigh = highs[0], lastLow = lows[0];
+  let lastHighIdx = 0, lastLowIdx = 0;
+  let trend = 0;
+
+  const pivots: Pivot[] = [];
+
+  for (let i = 1; i < n; i++) {
+    if (highs[i] >= lastHigh) {
+      lastHigh = highs[i];
+      lastHighIdx = i;
+    }
+    if (lows[i] <= lastLow) {
+      lastLow = lows[i];
+      lastLowIdx = i;
+    }
+
+    const dropFromHigh = (lastHigh - lows[i]) / lastHigh * 100;
+    const riseFromLow = (highs[i] - lastLow) / lastLow * 100;
+    const dropAbs = lastHigh - lows[i];
+    const riseAbs = highs[i] - lastLow;
+
+    const dropValid = dropFromHigh >= thresholdPct && dropAbs >= minSwing;
+    const riseValid = riseFromLow >= thresholdPct && riseAbs >= minSwing;
+
+    if ((trend >= 0) && dropValid && ((i - lastPivotIdx) >= minBars)) {
+      pivots.push({
+        index: lastHighIdx,
+        type: "high",
+        price: lastHigh,
+        date: candles[lastHighIdx].date,
+        prominence: dropFromHigh,
+        scale
+      });
+      lastPivotIdx = lastHighIdx;
+      lastLow = lows[i];
+      lastLowIdx = i;
+      trend = -1;
+    } else if ((trend <= 0) && riseValid && ((i - lastPivotIdx) >= minBars)) {
+      pivots.push({
+        index: lastLowIdx,
+        type: "low",
+        price: lastLow,
+        date: candles[lastLowIdx].date,
+        prominence: riseFromLow,
+        scale
+      });
+      lastPivotIdx = lastLowIdx;
+      lastHigh = highs[i];
+      lastHighIdx = i;
+      trend = 1;
     }
   }
-  
+
   return pivots;
 }
 
-function analyzeSymbol(candles: Candle[], symbol: string): Omit<SymbolMetrics, 'fundamentals'> {
+// ============================================================================
+// SECTION 5: PIVOT CLEANLINESS & STRUCTURAL SCORING
+// ============================================================================
+
+interface PivotCleanlinessMetrics {
+  score: number;
+  pivot_count_120bars: number;
+  median_prominence: number;
+  avg_swing_atr_multiple: number;
+}
+
+function calculatePivotCleanliness(candles: Candle[], atr: number): PivotCleanlinessMetrics {
+  const recent120 = candles.slice(-120);
+  if (recent120.length < 30) {
+    return { score: 0, pivot_count_120bars: 0, median_prominence: 0, avg_swing_atr_multiple: 0 };
+  }
+  
+  const recentATR = calculateATR(recent120) || atr;
+  
+  // Use meso-level thresholds for cleanliness
+  const pivots = computeAdaptiveZigZag(recent120, 4.0, 4, recentATR, 1.2, 'meso');
+  
+  const pivot_count_120bars = pivots.length;
+  
+  // Ideal range: 8-15 pivots for 120 bars
+  const expectedMin = 8;
+  const expectedMax = 15;
+  let countScore = 0;
+  if (pivot_count_120bars >= expectedMin && pivot_count_120bars <= expectedMax) {
+    countScore = 40; // Ideal
+  } else if (pivot_count_120bars > expectedMax) {
+    countScore = Math.max(0, 40 - (pivot_count_120bars - expectedMax) * 3); // Penalty for too many
+  } else {
+    countScore = Math.max(0, 40 - (expectedMin - pivot_count_120bars) * 5); // Penalty for too few
+  }
+  
+  // Median prominence
+  const prominences = pivots.map(p => p.prominence).sort((a, b) => a - b);
+  const median_prominence = prominences.length > 0 
+    ? prominences[Math.floor(prominences.length / 2)] 
+    : 0;
+  
+  // Prominence score: higher is better (3-8% is sweet spot)
+  let prominenceScore = 0;
+  if (median_prominence >= 3 && median_prominence <= 8) {
+    prominenceScore = 30;
+  } else if (median_prominence > 8) {
+    prominenceScore = 25;
+  } else if (median_prominence >= 2) {
+    prominenceScore = 15;
+  }
+  
+  // Calculate avg swing in ATR multiples
+  let totalSwingATR = 0;
+  for (let i = 0; i < pivots.length - 1; i++) {
+    const swing = Math.abs(pivots[i + 1].price - pivots[i].price);
+    totalSwingATR += swing / recentATR;
+  }
+  const avg_swing_atr_multiple = pivots.length > 1 ? totalSwingATR / (pivots.length - 1) : 0;
+  
+  // ATR multiple score: 1.5-3.0 is ideal
+  let atrScore = 0;
+  if (avg_swing_atr_multiple >= 1.5 && avg_swing_atr_multiple <= 3.0) {
+    atrScore = 30;
+  } else if (avg_swing_atr_multiple > 3.0) {
+    atrScore = 20;
+  } else if (avg_swing_atr_multiple >= 1.0) {
+    atrScore = 15;
+  }
+  
+  const score = Math.min(100, countScore + prominenceScore + atrScore);
+  
+  return {
+    score: Math.round(score * 10) / 10,
+    pivot_count_120bars,
+    median_prominence: Math.round(median_prominence * 100) / 100,
+    avg_swing_atr_multiple: Math.round(avg_swing_atr_multiple * 100) / 100
+  };
+}
+
+// ============================================================================
+// SECTION 6: DEEP PRECHECK (EW Structural Score without LLM)
+// ============================================================================
+
+interface DeepPrecheckResult {
+  ew_structural_score: number;
+  ew_ready: boolean;
+  notes: string;
+}
+
+function runDeepPrecheck(candles: Candle[], atr: number): DeepPrecheckResult {
+  if (candles.length < 100) {
+    return { ew_structural_score: 0, ew_ready: false, notes: "Insufficient data (<100 bars)" };
+  }
+  
+  // Get multi-scale pivots
+  const macroPivots = computeAdaptiveZigZag(candles, 10.0, 10, atr, 3.0, 'macro');
+  const mesoPivots = computeAdaptiveZigZag(candles, 5.0, 5, atr, 1.5, 'meso');
+  
+  let score = 0;
+  const notes: string[] = [];
+  
+  // Check 1: Minimum macro pivots for structure (at least 3)
+  if (macroPivots.length >= 3) {
+    score += 20;
+    notes.push("Macro structure present");
+  } else {
+    notes.push("Insufficient macro pivots");
+  }
+  
+  // Check 2: Alternation pattern (high-low-high or low-high-low)
+  let alternationValid = true;
+  for (let i = 1; i < Math.min(mesoPivots.length, 6); i++) {
+    if (mesoPivots[i].type === mesoPivots[i - 1].type) {
+      alternationValid = false;
+      break;
+    }
+  }
+  if (alternationValid && mesoPivots.length >= 4) {
+    score += 25;
+    notes.push("Good alternation pattern");
+  }
+  
+  // Check 3: Wave 3 not shortest approximation
+  // Find 3 consecutive up-moves and check middle isn't shortest
+  const upMoves: number[] = [];
+  for (let i = 0; i < mesoPivots.length - 1; i++) {
+    if (mesoPivots[i].type === 'low' && mesoPivots[i + 1].type === 'high') {
+      upMoves.push(mesoPivots[i + 1].price - mesoPivots[i].price);
+    }
+  }
+  if (upMoves.length >= 3) {
+    const lastThree = upMoves.slice(-3);
+    const middleIdx = 1;
+    const middleIsSmallest = lastThree[middleIdx] <= Math.min(lastThree[0], lastThree[2]);
+    if (!middleIsSmallest) {
+      score += 25;
+      notes.push("W3≠shortest check passed");
+    } else {
+      notes.push("Potential W3 shortest issue");
+    }
+  }
+  
+  // Check 4: Clear trend bias in recent action
+  const recent50 = candles.slice(-50);
+  const startPrice = recent50[0].close;
+  const endPrice = recent50[recent50.length - 1].close;
+  const trendPct = ((endPrice - startPrice) / startPrice) * 100;
+  if (Math.abs(trendPct) > 5) {
+    score += 15;
+    notes.push(`Clear trend: ${trendPct > 0 ? '+' : ''}${trendPct.toFixed(1)}%`);
+  }
+  
+  // Check 5: Not in extreme chop
+  const volatility = (Math.max(...recent50.map(c => c.high)) - Math.min(...recent50.map(c => c.low))) / endPrice * 100;
+  if (volatility < 30 && volatility > 5) {
+    score += 15;
+    notes.push("Healthy volatility range");
+  }
+  
+  return {
+    ew_structural_score: Math.min(100, score),
+    ew_ready: score >= 50,
+    notes: notes.join("; ")
+  };
+}
+
+// ============================================================================
+// SECTION 7: MAIN ANALYSIS FUNCTION
+// ============================================================================
+
+function analyzeSymbol(candles: Candle[], symbol: string, atr: number): Omit<SymbolMetrics, 'fundamentals' | 'shortName'> {
   if (candles.length < 30) {
     return {
       symbol,
@@ -312,47 +560,46 @@ function analyzeSymbol(candles: Candle[], symbol: string): Omit<SymbolMetrics, '
   const recent30 = candles.slice(-30);
   const recent90 = candles.slice(-90);
   
-  // Last price
   const last_price = candles[candles.length - 1].close;
   
   // Liquidity: avg volume * price (proxy for dollar volume)
   const avg_volume_30d = recent30.reduce((sum, c) => sum + c.volume, 0) / recent30.length;
   const dollarVolume = avg_volume_30d * last_price;
   
-  // Normalize liquidity score (0-100)
-  // $1M daily = 20, $10M = 50, $100M+ = 100
-  const liquidity_score = Math.min(100, Math.log10(Math.max(dollarVolume, 1000)) * 15);
+  // CALIBRATED liquidity score (logarithmic, less saturating)
+  // $100K = 10, $1M = 30, $10M = 50, $100M = 70, $1B = 90
+  const liquidity_score = Math.min(100, Math.max(0, 
+    10 + Math.log10(Math.max(dollarVolume, 100000)) * 12 - 60
+  ));
   
   // Volatility: ATR as percentage of price
-  const atr = calculateATR(recent30);
   const atr_pct = (atr / last_price) * 100;
   
-  // Normalize volatility score (higher = more volatile, 0-100)
-  // 1% ATR = 50, 2% = 70, 5% = 100
-  const volatility_score = Math.min(100, atr_pct * 20);
+  // CALIBRATED volatility score (less saturating)
+  // 0.5% = 25, 1% = 40, 2% = 55, 4% = 70, 8% = 85
+  const volatility_score = Math.min(100, Math.max(0,
+    25 + Math.log2(Math.max(atr_pct, 0.5)) * 20
+  ));
   
   // Regime detection using ADX
   const adx = calculateADX(recent90);
   const regime: 'trending' | 'ranging' | 'unknown' = adx > 25 ? 'trending' : 'ranging';
   
-  // Pivot cleanliness: ratio of significant pivots to noise
-  const pivots = detectPivots(candles.slice(-120), 3); // 3% threshold
-  const expectedPivots = 10; // Roughly what we'd expect for clean structure
-  const pivotRatio = pivots.length / expectedPivots;
-  // Score: closer to expected = higher, too many or too few = lower
-  const pivot_cleanliness = Math.max(0, 100 - Math.abs(1 - pivotRatio) * 50);
+  // Pivot cleanliness using adaptive ZigZag
+  const cleanlinessMetrics = calculatePivotCleanliness(candles, atr);
+  const pivot_cleanliness = cleanlinessMetrics.score;
   
   // Pre-filter score: weighted combination
-  // Higher liquidity, moderate volatility, trending regime, clean pivots
-  const trendBonus = regime === 'trending' ? 15 : 0;
-  const volatilityBonus = atr_pct >= 1 && atr_pct <= 4 ? 10 : 0; // Sweet spot
+  const trendBonus = regime === 'trending' ? 10 : 0;
+  const volatilityBonus = atr_pct >= 1 && atr_pct <= 4 ? 8 : (atr_pct >= 0.5 && atr_pct <= 6 ? 4 : 0);
   
   const pre_filter_score = Math.min(100, 
-    liquidity_score * 0.3 +
-    pivot_cleanliness * 0.4 +
+    liquidity_score * 0.20 +
+    pivot_cleanliness * 0.45 +
     volatilityBonus +
     trendBonus +
-    (regime === 'trending' ? volatility_score * 0.15 : 0)
+    (regime === 'trending' ? volatility_score * 0.10 : 0) +
+    15 // Base score
   );
 
   return {
@@ -369,7 +616,7 @@ function analyzeSymbol(candles: Candle[], symbol: string): Omit<SymbolMetrics, '
 }
 
 // ============================================================================
-// SECTION 5: MAIN HANDLER
+// SECTION 8: MAIN HANDLER
 // ============================================================================
 
 serve(async (req) => {
@@ -383,20 +630,21 @@ serve(async (req) => {
       symbols, 
       base_timeframe = '1D',
       topN = 10,
-      include_fundamentals = false 
+      include_fundamentals = false,
+      run_deep_precheck = false
     } = body;
 
     if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
       throw new Error('symbols array is required');
     }
 
-    console.log(`Scanning ${symbols.length} symbols with base_timeframe=${base_timeframe}, topN=${topN}`);
+    console.log(`[v${API_VERSION}] Scanning ${symbols.length} symbols with base_timeframe=${base_timeframe}, topN=${topN}, deep_precheck=${run_deep_precheck}`);
 
     const rankings: SymbolMetrics[] = [];
     let processed = 0;
     let failed = 0;
 
-    // Process symbols in parallel batches of 5 to avoid rate limits
+    // Process symbols in parallel batches of 5
     const batchSize = 5;
     for (let i = 0; i < symbols.length; i += batchSize) {
       const batch = symbols.slice(i, i + batchSize);
@@ -405,15 +653,19 @@ serve(async (req) => {
         batch.map(async (symbol) => {
           try {
             const candles = await fetchOHLCV(symbol, base_timeframe);
-            const metrics = analyzeSymbol(candles, symbol);
+            const atr = calculateATR(candles);
+            const metrics = analyzeSymbol(candles, symbol, atr);
             
-            // Optionally fetch fundamentals
+            let result: SymbolMetrics = { ...metrics };
+            
+            // Fetch fundamentals if requested
             if (include_fundamentals) {
               const fundamentals = await fetchFundamentals(symbol);
-              return { ...metrics, fundamentals };
+              result.fundamentals = fundamentals;
+              result.shortName = fundamentals.shortName || undefined;
             }
             
-            return metrics;
+            return result;
           } catch (error) {
             console.error(`Error processing ${symbol}:`, error);
             failed++;
@@ -436,7 +688,6 @@ serve(async (req) => {
       rankings.push(...batchResults);
       processed += batch.length;
       
-      // Small delay between batches to avoid rate limiting
       if (i + batchSize < symbols.length) {
         await new Promise(r => setTimeout(r, 200));
       }
@@ -446,13 +697,42 @@ serve(async (req) => {
     rankings.sort((a, b) => b.pre_filter_score - a.pre_filter_score);
 
     // Get top N symbols for deep analysis
-    const top_symbols = rankings
-      .filter(r => !r.error)
-      .slice(0, topN)
-      .map(r => r.symbol);
+    const topRankings = rankings.filter(r => !r.error).slice(0, topN);
+    
+    // Run deep precheck for topN if requested
+    if (run_deep_precheck && topRankings.length > 0) {
+      console.log(`Running deep precheck for top ${topRankings.length} symbols...`);
+      
+      for (const ranking of topRankings) {
+        try {
+          const candles = await fetchOHLCV(ranking.symbol, base_timeframe);
+          const atr = calculateATR(candles);
+          const precheck = runDeepPrecheck(candles, atr);
+          
+          ranking.ew_structural_score = precheck.ew_structural_score;
+          ranking.ew_ready = precheck.ew_ready;
+          ranking.ew_notes = precheck.notes;
+        } catch (error) {
+          console.error(`Deep precheck failed for ${ranking.symbol}:`, error);
+          ranking.ew_structural_score = 0;
+          ranking.ew_ready = false;
+          ranking.ew_notes = 'Precheck failed';
+        }
+      }
+      
+      // Re-sort incorporating ew_structural_score
+      topRankings.sort((a, b) => {
+        const scoreA = a.pre_filter_score * 0.6 + (a.ew_structural_score || 0) * 0.4;
+        const scoreB = b.pre_filter_score * 0.6 + (b.ew_structural_score || 0) * 0.4;
+        return scoreB - scoreA;
+      });
+    }
+
+    const top_symbols = topRankings.map(r => r.symbol);
 
     const result: ScanResult = {
       scan_id: crypto.randomUUID(),
+      api_version: API_VERSION,
       total_symbols: symbols.length,
       processed,
       failed,
@@ -472,7 +752,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         error: error instanceof Error ? error.message : 'Unknown error',
-        details: 'Failed to complete universe scan'
+        details: 'Failed to complete universe scan',
+        api_version: API_VERSION
       }),
       { 
         status: 500, 
