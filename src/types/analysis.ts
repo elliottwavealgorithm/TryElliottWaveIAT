@@ -23,6 +23,7 @@ export interface AlternateCount {
   pattern: string;
   justification: string;
   key_difference: string;
+  waves?: WavePoint[]; // Optional wave points for chart overlay
 }
 
 export interface KeyLevels {

@@ -983,8 +983,21 @@ If <3 criteria met → You MUST output:
 {
   "status": "inconclusive",
   "primary_count": { "label": "Inconclusive - Multiple scenarios", ... },
-  "alternate_counts": [at least 2 alternates with equal weight]
+  "alternate_counts": [at least 2 alternates with equal weight, EACH with "waves" array]
 }
+
+## ALTERNATE COUNT WAVES REQUIREMENT (MANDATORY)
+
+For EVERY alternate count, you MUST include a "waves" array with the same format as primary_count.waves:
+- waves: [{ "wave": string, "date": string, "price": number, "degree": string }]
+- At minimum, include waves for the top 2 alternates
+- Each alternate's waves must be internally time-consistent (dates non-decreasing)
+- No duplicate sequential pivots with same date but different price
+
+## FORECAST DIRECTION NORMALIZATION
+
+All forecast.direction values MUST be one of: "bullish" | "bearish" | "neutral"
+Do NOT use: "up", "down", "sideways", or any other variations.
 
 ## 📊 EVIDENCE SCORE CALCULATION (0-100)
 
@@ -1038,7 +1051,8 @@ Alignment across macro/meso/micro.
     "probability": 0-100,
     "pattern": "...",
     "justification": "...",
-    "key_difference": "..."
+    "key_difference": "...",
+    "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "..." }]
   }],
   "key_levels": {
     "support": [...],
@@ -1246,6 +1260,39 @@ async function callLLM(
       try {
         const report = JSON.parse(jsonText);
         console.log('Parsed report, status:', report.status);
+        
+        // Validate alternate_counts have waves for top 2
+        const alternates = report.alternate_counts || [];
+        const top2WithoutWaves = alternates.slice(0, 2).filter(
+          (alt: any) => !alt.waves || !Array.isArray(alt.waves) || alt.waves.length === 0
+        );
+        
+        if (top2WithoutWaves.length > 0 && attempt < maxRetries) {
+          console.log(`Alternate validation failed: ${top2WithoutWaves.length} of top 2 missing waves. Retrying...`);
+          continue;
+        }
+        
+        // Normalize forecast directions
+        if (report.forecast) {
+          const normalizeDirection = (dir: string) => {
+            const d = String(dir).toLowerCase();
+            if (d === 'up' || d === 'bull') return 'bullish';
+            if (d === 'down' || d === 'bear') return 'bearish';
+            if (d === 'sideways' || d === 'flat' || d === 'range') return 'neutral';
+            return d; // Already correct or unknown
+          };
+          
+          if (report.forecast.short_term) {
+            report.forecast.short_term.direction = normalizeDirection(report.forecast.short_term.direction);
+          }
+          if (report.forecast.medium_term) {
+            report.forecast.medium_term.direction = normalizeDirection(report.forecast.medium_term.direction);
+          }
+          if (report.forecast.long_term) {
+            report.forecast.long_term.direction = normalizeDirection(report.forecast.long_term.direction);
+          }
+        }
+        
         return report;
       } catch (parseError) {
         console.error('JSON parse error:', parseError);
