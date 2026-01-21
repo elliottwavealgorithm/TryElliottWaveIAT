@@ -63,6 +63,8 @@ interface CageCandidateBreak {
   bars_since_break: number;
   first_break_date?: string;
   break_index?: number | null;
+  break_price?: number | null;
+  boundary_value_at_break?: number | null;
 }
 
 interface CagePoint {
@@ -577,6 +579,8 @@ function detectCageBreakWithATR(
   let barsSince = 0;
   let breakDate: string | undefined = undefined;
   let confirmedBreakIdx = -1;
+  let breakPrice: number | null = null;
+  let boundaryValue: number | null = null;
 
   for (let i = startIdx; i < candles.length; i++) {
     const upperValue = getLineValue(cage.upper, i);
@@ -596,6 +600,8 @@ function detectCageBreakWithATR(
         direction = 'up';
         confirmedBreakIdx = i;
         breakDate = candles[i].date;
+        breakPrice = candles[i].close;
+        boundaryValue = upperValue;
         const breakDist = candles[i].close - upperValue;
         strengthPct = (breakDist / upperValue) * 100;
         strengthAtr = atr > 0 ? breakDist / atr : 0;
@@ -616,6 +622,8 @@ function detectCageBreakWithATR(
         direction = 'down';
         confirmedBreakIdx = i;
         breakDate = candles[i].date;
+        breakPrice = candles[i].close;
+        boundaryValue = lowerValue;
         const breakDist = lowerValue - candles[i].close;
         strengthPct = (breakDist / lowerValue) * 100;
         strengthAtr = atr > 0 ? breakDist / atr : 0;
@@ -635,7 +643,9 @@ function detectCageBreakWithATR(
     break_strength_atr: Math.round(strengthAtr * 100) / 100,
     bars_since_break: barsSince, 
     first_break_date: breakDate,
-    break_index: confirmedBreakIdx >= 0 ? confirmedBreakIdx : null
+    break_index: confirmedBreakIdx >= 0 ? confirmedBreakIdx : null,
+    break_price: breakPrice,
+    boundary_value_at_break: boundaryValue
   };
 }
 
