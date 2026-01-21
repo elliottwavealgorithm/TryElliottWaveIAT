@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Helmet } from "react-helmet-async";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, TrendingUp, Zap, Bot, ChevronDown, Mail, ArrowRight } from "lucide-react";
+import { Loader2, TrendingUp, Zap, Bot, ChevronDown, Mail, ArrowRight, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
@@ -201,7 +202,12 @@ export default function Index() {
                 <img src={goxLogo} alt="GOX" className="h-8 w-auto invert" />
               </div>
               <div className="flex items-center gap-4">
-                {/* Reserved for future navigation */}
+                <Link to="/screener">
+                  <Button variant="outline" className="gap-2">
+                    <BarChart3 className="h-4 w-4" />
+                    Screener
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
