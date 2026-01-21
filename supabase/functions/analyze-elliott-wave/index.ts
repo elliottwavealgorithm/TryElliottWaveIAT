@@ -863,12 +863,53 @@ If <3 criteria met → You MUST output:
   "alternate_counts": [at least 2 alternates with equal weight]
 }
 
+## 📊 EVIDENCE SCORE CALCULATION (0-100)
+
+You MUST calculate an evidence_score and provide a detailed checklist.
+The score is the sum of the following components:
+
+### 1. HARD_RULES (Pass/Fail → 20 points if pass, 0 if fail)
+Check all 5 hard rules. If ANY is violated → 0 points.
+
+### 2. FIBONACCI (0-20 points)
+- Wave relationships follow Fibonacci ratios perfectly: 20
+- Most waves follow Fibonacci with minor deviations: 15
+- Some Fibonacci relationships but inconsistent: 10
+- Weak or no Fibonacci relationships: 0-5
+
+### 3. MOMENTUM_VOLUME (0-20 points)
+- Wave 3 has highest volume, wave 5 shows divergence: 20
+- Volume confirms most waves: 15
+- Partial volume confirmation: 10
+- No clear volume pattern: 0-5
+
+### 4. CAGES (0-20 points)
+- cage_2_4 exists AND broken with strength >1.0 ATR: 20
+- cage_2_4 exists AND broken with strength 0.5-1.0 ATR: 15
+- cage_2_4 exists but not broken (if bullish continuation expected): 10
+- No cage or conflicting cage signals: 0-5
+- Also consider cage_ACB and wedge_cage
+
+### 5. MULTI_TF_CONSISTENCY (0-20 points)
+- Macro, Meso, Micro counts align perfectly: 20
+- Minor discrepancies between timeframes: 15
+- Some conflict but resolvable: 10
+- Major discrepancies between timeframes: 0-5
+
 ## OUTPUT FORMAT
 
 {
   "status": "conclusive" | "inconclusive",
   "symbol": "...",
   "timeframe": "...",
+  "evidence_score": 0-100,
+  "evidence_checklist": {
+    "hard_rules": { "passed": true|false, "score": 0|20, "details": "..." },
+    "fibonacci": { "score": 0-20, "details": "..." },
+    "momentum_volume": { "score": 0-20, "details": "..." },
+    "cages": { "score": 0-20, "details": "..." },
+    "multi_tf_consistency": { "score": 0-20, "details": "..." }
+  },
   "multi_degree_analysis": {
     "macro": { "degree": "Supercycle", "current_wave": "...", "structure": "..." },
     "meso": { "degree": "Primary", "current_wave": "...", "within_macro": "..." },
@@ -876,39 +917,44 @@ If <3 criteria met → You MUST output:
   },
   "historical_low": { "date": "...", "price": ... },
   "primary_count": {
-    "label": "...",
-    "probability": "high" | "medium" | "low",
-    "waves": {
-      "wave1": { "start": ..., "end": ..., "date_start": "...", "date_end": "..." },
+    "pattern": "impulse" | "diagonal" | "zigzag" | "flat" | "complex",
+    "waves": [
+      { "wave": "1", "date": "...", "price": ... },
+      { "wave": "2", "date": "...", "price": ... },
       ...
-    },
-    "pattern_type": "impulse" | "diagonal" | "zigzag" | "flat" | "complex",
-    "wave5_criteria_met": ["list of met criteria from anti-generic rule"],
-    "wave5_criteria_failed": ["list of failed criteria"],
-    "fib_validation": "...",
-    "cage_validation": "...",
-    "invalidations": [...],
-    "commentary": "..."
+    ],
+    "current_wave": "5",
+    "next_expected": "A or new cycle",
+    "confidence": 0-100
   },
   "alternate_counts": [
     {
       "label": "...",
-      "probability": "...",
+      "probability": 0-100,
+      "pattern": "...",
       "justification": "...",
-      "key_difference": "...",
-      "invalidations": [...]
+      "key_difference": "What pivot or degree changes the interpretation"
     }
   ],
-  "levels": {
-    "key_supports": [...],
-    "key_resistances": [...],
-    "fibonacci_targets": [...],
-    "invalidations": [...]
+  "key_levels": {
+    "support": [...numbers...],
+    "resistance": [...numbers...],
+    "fibonacci_targets": [...numbers...],
+    "invalidation": number
   },
-  "confidence": 0.0-1.0,
-  "supercycle": [...],
-  "notes": "..."
-}
+  "cage_features": {
+    "cage_2_4": { "exists": bool, "broken": bool, "break_direction": "up"|"down", "break_strength": number, "bars_since_break": number },
+    "cage_ACB": { "exists": bool, "broken_up": bool, "broken_down": bool, "break_strength": number },
+    "wedge_cage": { "exists": bool, "broken": bool, "break_strength": number, "wedge_type": "expanding"|"contracting" }
+  },
+  "forecast": {
+    "short_term": { "direction": "bullish"|"bearish"|"neutral", "target": number, "timeframe": "1-2 weeks" },
+    "medium_term": { "direction": "bullish"|"bearish"|"neutral", "target": number, "timeframe": "1-3 months" },
+    "long_term": { "direction": "bullish"|"bearish"|"neutral", "target": number, "timeframe": "6-12 months" }
+  },
+  "key_uncertainties": ["What pivots or interpretations are ambiguous"],
+  "what_would_confirm": ["What events would confirm the primary count"],
+  "summary": "2-3 sentence summary in plain language"
 
 ## TRAINING MODE
 
