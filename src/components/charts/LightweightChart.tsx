@@ -12,6 +12,15 @@ interface WaveMarker {
   size: number;
 }
 
+interface NormalizedWaveLabel {
+  raw: string;
+  degree: string | null;
+  waveNum: number | null;
+  waveABC: 'A' | 'B' | 'C' | null;
+  colorKey: string;
+  display: string;
+}
+
 interface LightweightChartProps {
   candles: Candle[];
   symbol: string;
@@ -42,8 +51,110 @@ const WAVE_LABEL_COLORS: Record<string, string> = {
   'Y': '#0ea5e9',
 };
 
+const DEGREE_ABBREV: Record<string, string> = {
+  'supercycle': 'SC',
+  'cycle': 'C',
+  'primary': 'P',
+  'intermediate': 'I',
+  'minor': 'm',
+  'minute': 'μ',
+};
+
+const ROMAN_TO_ARABIC: Record<string, number> = {
+  'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
+  'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+};
+
+function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
+  const result: NormalizedWaveLabel = {
+    raw,
+    degree: null,
+    waveNum: null,
+    waveABC: null,
+    colorKey: 'X',
+    display: raw,
+  };
+
+  const upper = raw.toUpperCase();
+  const lower = raw.toLowerCase();
+
+  // Extract degree if present
+  const degreeKeywords = ['supercycle', 'cycle', 'primary', 'intermediate', 'minor', 'minute'];
+  for (const deg of degreeKeywords) {
+    if (lower.includes(deg)) {
+      result.degree = deg.charAt(0).toUpperCase() + deg.slice(1);
+      break;
+    }
+  }
+
+  // Try Arabic digit 1-5
+  const arabicMatch = raw.match(/[1-5]/);
+  if (arabicMatch) {
+    result.waveNum = parseInt(arabicMatch[0], 10);
+    result.colorKey = arabicMatch[0];
+  }
+
+  // Try Roman numerals if no Arabic found
+  if (!result.waveNum) {
+    const romanMatch = raw.match(/\b(IV|III|II|I|V|iv|iii|ii|i|v)\b/);
+    if (romanMatch && ROMAN_TO_ARABIC[romanMatch[1]]) {
+      result.waveNum = ROMAN_TO_ARABIC[romanMatch[1]];
+      result.colorKey = String(result.waveNum);
+    }
+  }
+
+  // Check for correction letters A, B, C
+  const abcMatch = upper.match(/\b([ABC])\b|\(([ABC])\)/);
+  if (abcMatch) {
+    const letter = (abcMatch[1] || abcMatch[2]) as 'A' | 'B' | 'C';
+    result.waveABC = letter;
+    if (!result.waveNum) {
+      result.colorKey = letter;
+    }
+  }
+
+  // Check for W, X, Y
+  if (!result.waveNum && !result.waveABC) {
+    const wxyMatch = upper.match(/\b([WXY])\b/);
+    if (wxyMatch) {
+      result.colorKey = wxyMatch[1];
+    }
+  }
+
+  // Build compact display
+  const degAbbrev = result.degree ? DEGREE_ABBREV[result.degree.toLowerCase()] || '' : '';
+  if (result.waveNum) {
+    result.display = degAbbrev ? `${degAbbrev}${result.waveNum}` : String(result.waveNum);
+  } else if (result.waveABC) {
+    result.display = degAbbrev ? `${degAbbrev}-${result.waveABC}` : result.waveABC;
+  } else if (result.colorKey !== 'X') {
+    result.display = result.colorKey;
+  }
+
+  return result;
+}
+
 function isImpulseWave(wave: string): boolean {
-  return ['1', '2', '3', '4', '5'].includes(wave);
+  const norm = normalizeWaveLabel(wave);
+  return norm.waveNum !== null && [1, 2, 3, 4, 5].includes(norm.waveNum);
+}
+
+function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | null {
+  const degreeCounts: Record<string, number> = {};
+  for (const p of points) {
+    if (p.norm.degree) {
+      degreeCounts[p.norm.degree] = (degreeCounts[p.norm.degree] || 0) + 1;
+    }
+  }
+  let maxDeg: string | null = null;
+  let maxCount = 0;
+  for (const [deg, count] of Object.entries(degreeCounts)) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxDeg = deg;
+    }
+  }
+  return maxDeg;
 }
 
 export function LightweightChart({ 
@@ -73,6 +184,19 @@ export function LightweightChart({
     
     return analysis.primary_count?.waves || [];
   }, [analysis, selectedAlternateIndex]);
+
+  // Normalize wave labels for matching and display
+  const normalizedActiveWavePoints = useMemo(() => {
+    return activeWavePoints.map(wp => ({
+      ...wp,
+      norm: normalizeWaveLabel(wp.wave),
+    }));
+  }, [activeWavePoints]);
+
+  // Find dominant degree for cage matching
+  const dominantDegree = useMemo(() => {
+    return findDominantDegree(normalizedActiveWavePoints);
+  }, [normalizedActiveWavePoints]);
 
   // Initialize chart
   useEffect(() => {
@@ -254,9 +378,19 @@ export function LightweightChart({
 
     // Draw cage 2-4 if exists and not broken
     if (cageFeatures.cage_2_4?.exists && !cageFeatures.cage_2_4?.broken) {
-      // We need at least 2 wave points to draw cage
-      const w2 = activeWavePoints.find(wp => wp.wave === '2');
-      const w4 = activeWavePoints.find(wp => wp.wave === '4');
+      // Find wave points with degree preference
+      const findWaveByNum = (num: number) => {
+        if (dominantDegree) {
+          const match = normalizedActiveWavePoints.find(
+            wp => wp.norm.degree === dominantDegree && wp.norm.waveNum === num
+          );
+          if (match) return match;
+        }
+        return normalizedActiveWavePoints.find(wp => wp.norm.waveNum === num);
+      };
+
+      const w2 = findWaveByNum(2);
+      const w4 = findWaveByNum(4);
       
       if (w2 && w4) {
         try {
@@ -286,7 +420,7 @@ export function LightweightChart({
           cageSeriesRefs.current.push(lowerLine);
 
           // Upper cage line (parallel through wave 3)
-          const w3 = activeWavePoints.find(wp => wp.wave === '3');
+          const w3 = findWaveByNum(3);
           if (w3) {
             // Calculate parallel line
             const slope = (w4.price - w2.price) / (new Date(w4.date).getTime() - new Date(w2.date).getTime());
@@ -322,7 +456,7 @@ export function LightweightChart({
         }
       }
     }
-  }, [analysis?.cage_features, activeWavePoints, isReady]);
+  }, [analysis?.cage_features, normalizedActiveWavePoints, dominantDegree, isReady]);
 
   // Add price lines for key levels
   useEffect(() => {
@@ -395,21 +529,25 @@ export function LightweightChart({
       </div>
 
       {/* Legend */}
-      {activeWavePoints.length > 0 && (
+      {normalizedActiveWavePoints.length > 0 && (
         <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs">
           <span className="text-muted-foreground">Waves:</span>
-          {activeWavePoints.map(wp => (
-            <span 
-              key={wp.wave} 
-              className="px-1.5 py-0.5 rounded"
-              style={{ 
-                backgroundColor: `${WAVE_LABEL_COLORS[wp.wave]}20`,
-                color: WAVE_LABEL_COLORS[wp.wave] 
-              }}
-            >
-              {wp.wave}
-            </span>
-          ))}
+          {normalizedActiveWavePoints.map((wp, idx) => {
+            const color = WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280';
+            return (
+              <span 
+                key={`${wp.norm.display}-${idx}`}
+                className="px-1.5 py-0.5 rounded"
+                style={{ 
+                  backgroundColor: `${color}20`,
+                  color: color,
+                }}
+                title={wp.wave}
+              >
+                {wp.norm.display}
+              </span>
+            );
+          })}
         </div>
       )}
 
