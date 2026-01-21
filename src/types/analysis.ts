@@ -33,7 +33,13 @@ export interface KeyLevels {
   invalidation: number;
 }
 
-// Updated cage features with break_strength_atr
+// Line equation for cage drawing (y = slope * x + intercept, where x = candle index)
+export interface CageLine {
+  slope: number;
+  intercept: number;
+}
+
+// Updated cage features with break_strength_atr and line equations
 export interface CageBreakInfo {
   broken: boolean;
   break_direction?: 'up' | 'down';
@@ -46,6 +52,11 @@ export interface CageBreakInfo {
 export interface CageCandidate {
   label: string;
   exists: boolean;
+  upper_line?: CageLine;
+  lower_line?: CageLine;
+  start_index?: number;
+  anchor_index?: number;
+  projected_to_index?: number;
   w2_idx?: number;
   w3_idx?: number;
   w4_idx?: number;
@@ -63,6 +74,12 @@ export interface CageFeatures {
     bars_since_break: number;
     first_break_date?: string;
     selected_candidate?: string;
+    // Line equations for drawing
+    upper_line?: CageLine;
+    lower_line?: CageLine;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
   };
   cage_2_4_candidates?: CageCandidate[];
   cage_ACB: {
@@ -72,6 +89,12 @@ export interface CageFeatures {
     break_strength: number;
     break_strength_pct?: number;
     break_strength_atr?: number;
+    // Line equations for drawing
+    upper_line?: CageLine;
+    lower_line?: CageLine;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
   };
   wedge_cage: {
     exists: boolean;
@@ -80,6 +103,12 @@ export interface CageFeatures {
     break_strength_pct?: number;
     break_strength_atr?: number;
     wedge_type?: 'expanding' | 'contracting';
+    // Line equations for drawing
+    upper_line?: CageLine;
+    lower_line?: CageLine;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
   };
 }
 

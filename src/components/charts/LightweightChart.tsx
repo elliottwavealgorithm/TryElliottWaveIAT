@@ -399,12 +399,22 @@ export function LightweightChart({
     }
   }, [activeWavePoints, isReady, selectedAlternateIndex]);
 
-  // Add cage lines
+  // Helper to convert candle date to index
+  const dateToIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    candles.forEach((c, idx) => {
+      map.set(c.date, idx);
+    });
+    return map;
+  }, [candles]);
+
+  // Draw cage lines using backend-provided line equations
   useEffect(() => {
     if (!chartRef.current || !isReady || !analysis?.cage_features) return;
 
     const chart = chartRef.current;
     const cageFeatures = analysis.cage_features;
+    const lastCandleIndex = candles.length - 1;
 
     // Clear previous cage lines
     cageSeriesRefs.current.forEach(series => {
@@ -414,89 +424,152 @@ export function LightweightChart({
     });
     cageSeriesRefs.current = [];
 
-    // Draw cage 2-4 if exists and not broken
-    if (cageFeatures.cage_2_4?.exists && !cageFeatures.cage_2_4?.broken) {
-      // Find wave points with degree preference, fallback to any degree
-      const findWaveByNum = (num: number) => {
-        // First try: match dominant degree if available
-        if (dominantDegree) {
-          const match = normalizedActiveWavePoints.find(
-            wp => wp.norm.degree === dominantDegree && wp.norm.waveNum === num
-          );
-          if (match) return match;
-        }
-        // Fallback: any wave point with matching waveNum (regardless of degree)
-        return normalizedActiveWavePoints.find(wp => wp.norm.waveNum === num);
-      };
-
-      const w2 = findWaveByNum(2);
-      const w4 = findWaveByNum(4);
+    // Helper to draw a cage line pair
+    const drawCageLines = (
+      upperLine: { slope: number; intercept: number } | undefined,
+      lowerLine: { slope: number; intercept: number } | undefined,
+      startIndex: number | undefined,
+      projectedToIndex: number | undefined,
+      color: string,
+      isBroken: boolean,
+      breakDate?: string
+    ) => {
+      if (!upperLine || !lowerLine) return;
       
-      if (w2 && w4) {
-        try {
-          // Lower cage line (through wave 2 and 4)
-          let lowerLine: any;
-          if (typeof (chart as any).addLineSeries === 'function') {
-            lowerLine = (chart as any).addLineSeries({
-              color: '#f59e0b',
-              lineWidth: 1,
-              lineStyle: LineStyle.Dashed,
-              crosshairMarkerVisible: false,
-              lastValueVisible: false,
-              priceLineVisible: false,
-            });
-          } else {
-            lowerLine = (chart as any).addSeries({ type: 'Line' }, {
-              color: '#f59e0b',
-              lineWidth: 1,
-              lineStyle: LineStyle.Dashed,
-            });
-          }
-
-          lowerLine.setData([
-            { time: w2.date as Time, value: w2.price },
-            { time: w4.date as Time, value: w4.price },
-          ]);
-          cageSeriesRefs.current.push(lowerLine);
-
-          // Upper cage line (parallel through wave 3)
-          const w3 = findWaveByNum(3);
-          if (w3) {
-            // Calculate parallel line
-            const slope = (w4.price - w2.price) / (new Date(w4.date).getTime() - new Date(w2.date).getTime());
-            const upperPrice2 = w3.price + slope * (new Date(w2.date).getTime() - new Date(w3.date).getTime());
-            const upperPrice4 = w3.price + slope * (new Date(w4.date).getTime() - new Date(w3.date).getTime());
-            
-            let upperLine: any;
+      const x1 = startIndex ?? 0;
+      const x2 = projectedToIndex ?? lastCandleIndex;
+      
+      // Calculate y values using line equations: y = slope * x + intercept
+      const upperY1 = upperLine.slope * x1 + upperLine.intercept;
+      const upperY2 = upperLine.slope * x2 + upperLine.intercept;
+      const lowerY1 = lowerLine.slope * x1 + lowerLine.intercept;
+      const lowerY2 = lowerLine.slope * x2 + lowerLine.intercept;
+      
+      // Get dates for x1 and x2
+      const date1 = candles[x1]?.date;
+      const date2 = candles[x2]?.date;
+      if (!date1 || !date2) return;
+      
+      try {
+        // Draw lower line
+        let lowerSeries: any;
+        if (typeof (chart as any).addLineSeries === 'function') {
+          lowerSeries = (chart as any).addLineSeries({
+            color: isBroken ? `${color}80` : color, // Reduced opacity if broken
+            lineWidth: 1,
+            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+        } else {
+          lowerSeries = (chart as any).addSeries({ type: 'Line' }, {
+            color: isBroken ? `${color}80` : color,
+            lineWidth: 1,
+            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+          });
+        }
+        lowerSeries.setData([
+          { time: date1 as Time, value: lowerY1 },
+          { time: date2 as Time, value: lowerY2 },
+        ]);
+        cageSeriesRefs.current.push(lowerSeries);
+        
+        // Draw upper line
+        let upperSeries: any;
+        if (typeof (chart as any).addLineSeries === 'function') {
+          upperSeries = (chart as any).addLineSeries({
+            color: isBroken ? `${color}80` : color,
+            lineWidth: 1,
+            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+        } else {
+          upperSeries = (chart as any).addSeries({ type: 'Line' }, {
+            color: isBroken ? `${color}80` : color,
+            lineWidth: 1,
+            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+          });
+        }
+        upperSeries.setData([
+          { time: date1 as Time, value: upperY1 },
+          { time: date2 as Time, value: upperY2 },
+        ]);
+        cageSeriesRefs.current.push(upperSeries);
+        
+        // Draw break marker if broken and we have the date
+        if (isBroken && breakDate) {
+          const breakIndex = dateToIndex.get(breakDate);
+          if (breakIndex !== undefined && candles[breakIndex]) {
+            // Draw a small vertical line marker at break point
+            let breakMarker: any;
             if (typeof (chart as any).addLineSeries === 'function') {
-              upperLine = (chart as any).addLineSeries({
-                color: '#f59e0b',
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
+              breakMarker = (chart as any).addLineSeries({
+                color: '#ef4444',
+                lineWidth: 2,
+                lineStyle: LineStyle.Solid,
                 crosshairMarkerVisible: false,
                 lastValueVisible: false,
                 priceLineVisible: false,
               });
             } else {
-              upperLine = (chart as any).addSeries({ type: 'Line' }, {
-                color: '#f59e0b',
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
+              breakMarker = (chart as any).addSeries({ type: 'Line' }, {
+                color: '#ef4444',
+                lineWidth: 2,
               });
             }
-
-            upperLine.setData([
-              { time: w2.date as Time, value: upperPrice2 },
-              { time: w4.date as Time, value: upperPrice4 },
+            const breakCandle = candles[breakIndex];
+            breakMarker.setData([
+              { time: breakCandle.date as Time, value: breakCandle.low * 0.995 },
+              { time: breakCandle.date as Time, value: breakCandle.high * 1.005 },
             ]);
-            cageSeriesRefs.current.push(upperLine);
+            cageSeriesRefs.current.push(breakMarker);
           }
-        } catch (e) {
-          console.warn('Failed to draw cage lines:', e);
         }
+      } catch (e) {
+        console.warn('Failed to draw cage lines:', e);
       }
+    };
+
+    // Draw cage_2_4 using line equations
+    if (cageFeatures.cage_2_4?.exists && cageFeatures.cage_2_4?.upper_line && cageFeatures.cage_2_4?.lower_line) {
+      drawCageLines(
+        cageFeatures.cage_2_4.upper_line,
+        cageFeatures.cage_2_4.lower_line,
+        cageFeatures.cage_2_4.start_index,
+        cageFeatures.cage_2_4.projected_to_index,
+        '#f59e0b', // amber
+        cageFeatures.cage_2_4.broken || false,
+        cageFeatures.cage_2_4.first_break_date
+      );
     }
-  }, [analysis?.cage_features, normalizedActiveWavePoints, dominantDegree, isReady]);
+
+    // Draw cage_ACB
+    if (cageFeatures.cage_ACB?.exists && cageFeatures.cage_ACB?.upper_line && cageFeatures.cage_ACB?.lower_line) {
+      drawCageLines(
+        cageFeatures.cage_ACB.upper_line,
+        cageFeatures.cage_ACB.lower_line,
+        cageFeatures.cage_ACB.start_index,
+        cageFeatures.cage_ACB.projected_to_index,
+        '#06b6d4', // cyan
+        cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false
+      );
+    }
+
+    // Draw wedge_cage
+    if (cageFeatures.wedge_cage?.exists && cageFeatures.wedge_cage?.upper_line && cageFeatures.wedge_cage?.lower_line) {
+      drawCageLines(
+        cageFeatures.wedge_cage.upper_line,
+        cageFeatures.wedge_cage.lower_line,
+        cageFeatures.wedge_cage.start_index,
+        cageFeatures.wedge_cage.projected_to_index,
+        '#a855f7', // purple
+        cageFeatures.wedge_cage.broken || false
+      );
+    }
+  }, [analysis?.cage_features, candles, dateToIndex, isReady]);
 
   // Add price lines for key levels
   useEffect(() => {

@@ -67,8 +67,11 @@ interface CageCandidateBreak {
 interface CageCandidate {
   label: string;
   exists: boolean;
-  upper_line?: { slope: number; intercept: number };
-  lower_line?: { slope: number; intercept: number };
+  upper_line?: Line;
+  lower_line?: Line;
+  start_index?: number;
+  anchor_index?: number;
+  projected_to_index?: number;
   w2_idx?: number;
   w3_idx?: number;
   w4_idx?: number;
@@ -76,6 +79,21 @@ interface CageCandidate {
 }
 
 interface CageFeatures {
+  cage_2_4: {
+    exists: boolean;
+    broken: boolean;
+    break_direction?: 'up' | 'down';
+    break_strength_pct: number;
+    break_strength_atr: number;
+    bars_since_break: number;
+    first_break_date?: string;
+    selected_candidate?: string;
+    upper_line?: Line;
+    lower_line?: Line;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
+  };
   cage_2_4_candidates: CageCandidate[];
   cage_ACB: {
     exists: boolean;
@@ -83,6 +101,11 @@ interface CageFeatures {
     broken_down: boolean;
     break_strength_pct: number;
     break_strength_atr: number;
+    upper_line?: Line;
+    lower_line?: Line;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
   };
   wedge_cage: {
     exists: boolean;
@@ -90,6 +113,11 @@ interface CageFeatures {
     break_strength_pct: number;
     break_strength_atr: number;
     wedge_type?: 'expanding' | 'contracting';
+    upper_line?: Line;
+    lower_line?: Line;
+    start_index?: number;
+    anchor_index?: number;
+    projected_to_index?: number;
   };
 }
 
@@ -599,6 +627,7 @@ function generateCageCandidates(
   atr: number
 ): CageCandidate[] {
   const candidates: CageCandidate[] = [];
+  const lastCandleIndex = candles.length - 1;
   
   if (pivots.length < 4) {
     return [{ 
@@ -638,6 +667,9 @@ function generateCageCandidates(
               exists: true,
               upper_line: cage.upper,
               lower_line: cage.lower,
+              start_index: w2.index,
+              anchor_index: w4.index,
+              projected_to_index: lastCandleIndex,
               w2_idx: w2.index,
               w3_idx: w3.index,
               w4_idx: w4.index,
@@ -676,6 +708,9 @@ function generateCageCandidates(
             exists: true,
             upper_line: cage.upper,
             lower_line: cage.lower,
+            start_index: w2.index,
+            anchor_index: w4.index,
+            projected_to_index: lastCandleIndex,
             w2_idx: w2.index,
             w3_idx: w3.index,
             w4_idx: w4.index,
@@ -740,7 +775,16 @@ function computeCageFeatures(
   pivots: Pivot[],
   atr: number
 ): CageFeatures {
+  const lastCandleIndex = candles.length - 1;
+  
   const result: CageFeatures = {
+    cage_2_4: {
+      exists: false,
+      broken: false,
+      break_strength_pct: 0,
+      break_strength_atr: 0,
+      bars_since_break: 0,
+    },
     cage_2_4_candidates: [],
     cage_ACB: {
       exists: false,
@@ -759,6 +803,29 @@ function computeCageFeatures(
 
   // Generate multiple cage candidates for LLM to evaluate
   result.cage_2_4_candidates = generateCageCandidates(candles, pivots, atr);
+  
+  // Select the best candidate (prioritize unbroken, then by prominence)
+  const validCandidates = result.cage_2_4_candidates.filter(c => c.exists);
+  if (validCandidates.length > 0) {
+    // Prefer unbroken cages, then most recent
+    const selected = validCandidates.find(c => !c.break_info.broken) || validCandidates[validCandidates.length - 1];
+    
+    result.cage_2_4 = {
+      exists: true,
+      broken: selected.break_info.broken,
+      break_direction: selected.break_info.break_direction,
+      break_strength_pct: selected.break_info.break_strength_pct,
+      break_strength_atr: selected.break_info.break_strength_atr,
+      bars_since_break: selected.break_info.bars_since_break,
+      first_break_date: selected.break_info.first_break_date,
+      selected_candidate: selected.label,
+      upper_line: selected.upper_line,
+      lower_line: selected.lower_line,
+      start_index: selected.start_index,
+      anchor_index: selected.anchor_index,
+      projected_to_index: selected.projected_to_index,
+    };
+  }
 
   // A-C-B cage for corrections
   if (pivots.length >= 3) {
@@ -772,6 +839,12 @@ function computeCageFeatures(
       
       if (cageACB) {
         result.cage_ACB.exists = true;
+        result.cage_ACB.upper_line = cageACB.upper;
+        result.cage_ACB.lower_line = cageACB.lower;
+        result.cage_ACB.start_index = lastThree[0].index;
+        result.cage_ACB.anchor_index = lastThree[2].index;
+        result.cage_ACB.projected_to_index = lastCandleIndex;
+        
         const breakResult = detectCageBreakWithATR(cageACB, candles, lastThree[2].index + 1, atr);
         if (breakResult.broken) {
           result.cage_ACB.broken_up = breakResult.break_direction === 'up';
@@ -788,6 +861,19 @@ function computeCageFeatures(
   if (wedge) {
     result.wedge_cage.exists = true;
     result.wedge_cage.wedge_type = wedge.type;
+    result.wedge_cage.upper_line = wedge.upper;
+    result.wedge_cage.lower_line = wedge.lower;
+    
+    // Get start/anchor from the pivots used
+    const lastSixPivots = pivots.slice(-6);
+    const highs = lastSixPivots.filter(p => p.type === 'high').slice(-2);
+    const lows = lastSixPivots.filter(p => p.type === 'low').slice(-2);
+    if (highs.length >= 2 && lows.length >= 2) {
+      result.wedge_cage.start_index = Math.min(highs[0].index, lows[0].index);
+      result.wedge_cage.anchor_index = Math.max(highs[1].index, lows[1].index);
+      result.wedge_cage.projected_to_index = lastCandleIndex;
+    }
+    
     const breakResult = detectCageBreakWithATR({ upper: wedge.upper, lower: wedge.lower }, candles, pivots[pivots.length - 1].index + 1, atr);
     result.wedge_cage.broken = breakResult.broken;
     result.wedge_cage.break_strength_pct = breakResult.break_strength_pct;
