@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.scan-universe]
 verify_jwt = false
+
+[functions.prefilter-elliott]
+verify_jwt = false
+
+[functions.run-deep-analysis]
+verify_jwt = false
