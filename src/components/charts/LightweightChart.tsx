@@ -399,22 +399,12 @@ export function LightweightChart({
     }
   }, [activeWavePoints, isReady, selectedAlternateIndex]);
 
-  // Helper to convert candle date to index
-  const dateToIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    candles.forEach((c, idx) => {
-      map.set(c.date, idx);
-    });
-    return map;
-  }, [candles]);
-
-  // Draw cage lines using backend-provided line equations
+  // Draw cage lines using backend-provided pre-computed points
   useEffect(() => {
     if (!chartRef.current || !isReady || !analysis?.cage_features) return;
 
     const chart = chartRef.current;
     const cageFeatures = analysis.cage_features;
-    const lastCandleIndex = candles.length - 1;
 
     // Clear previous cage lines
     cageSeriesRefs.current.forEach(series => {
@@ -424,38 +414,22 @@ export function LightweightChart({
     });
     cageSeriesRefs.current = [];
 
-    // Helper to draw a cage line pair
-    const drawCageLines = (
-      upperLine: { slope: number; intercept: number } | undefined,
-      lowerLine: { slope: number; intercept: number } | undefined,
-      startIndex: number | undefined,
-      projectedToIndex: number | undefined,
+    // Helper to draw a cage using pre-computed points
+    const drawCageFromPoints = (
+      upperPoints: Array<{ date: string; value: number }> | undefined,
+      lowerPoints: Array<{ date: string; value: number }> | undefined,
       color: string,
       isBroken: boolean,
-      breakDate?: string
+      breakDate?: string | null
     ) => {
-      if (!upperLine || !lowerLine) return;
-      
-      const x1 = startIndex ?? 0;
-      const x2 = projectedToIndex ?? lastCandleIndex;
-      
-      // Calculate y values using line equations: y = slope * x + intercept
-      const upperY1 = upperLine.slope * x1 + upperLine.intercept;
-      const upperY2 = upperLine.slope * x2 + upperLine.intercept;
-      const lowerY1 = lowerLine.slope * x1 + lowerLine.intercept;
-      const lowerY2 = lowerLine.slope * x2 + lowerLine.intercept;
-      
-      // Get dates for x1 and x2
-      const date1 = candles[x1]?.date;
-      const date2 = candles[x2]?.date;
-      if (!date1 || !date2) return;
+      if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) return;
       
       try {
         // Draw lower line
         let lowerSeries: any;
         if (typeof (chart as any).addLineSeries === 'function') {
           lowerSeries = (chart as any).addLineSeries({
-            color: isBroken ? `${color}80` : color, // Reduced opacity if broken
+            color: isBroken ? `${color}80` : color,
             lineWidth: 1,
             lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
             crosshairMarkerVisible: false,
@@ -470,8 +444,8 @@ export function LightweightChart({
           });
         }
         lowerSeries.setData([
-          { time: date1 as Time, value: lowerY1 },
-          { time: date2 as Time, value: lowerY2 },
+          { time: lowerPoints[0].date as Time, value: lowerPoints[0].value },
+          { time: lowerPoints[1].date as Time, value: lowerPoints[1].value },
         ]);
         cageSeriesRefs.current.push(lowerSeries);
         
@@ -494,16 +468,15 @@ export function LightweightChart({
           });
         }
         upperSeries.setData([
-          { time: date1 as Time, value: upperY1 },
-          { time: date2 as Time, value: upperY2 },
+          { time: upperPoints[0].date as Time, value: upperPoints[0].value },
+          { time: upperPoints[1].date as Time, value: upperPoints[1].value },
         ]);
         cageSeriesRefs.current.push(upperSeries);
         
         // Draw break marker if broken and we have the date
         if (isBroken && breakDate) {
-          const breakIndex = dateToIndex.get(breakDate);
-          if (breakIndex !== undefined && candles[breakIndex]) {
-            // Draw a small vertical line marker at break point
+          const breakCandle = candles.find(c => c.date === breakDate);
+          if (breakCandle) {
             let breakMarker: any;
             if (typeof (chart as any).addLineSeries === 'function') {
               breakMarker = (chart as any).addLineSeries({
@@ -520,7 +493,6 @@ export function LightweightChart({
                 lineWidth: 2,
               });
             }
-            const breakCandle = candles[breakIndex];
             breakMarker.setData([
               { time: breakCandle.date as Time, value: breakCandle.low * 0.995 },
               { time: breakCandle.date as Time, value: breakCandle.high * 1.005 },
@@ -533,43 +505,39 @@ export function LightweightChart({
       }
     };
 
-    // Draw cage_2_4 using line equations
-    if (cageFeatures.cage_2_4?.exists && cageFeatures.cage_2_4?.upper_line && cageFeatures.cage_2_4?.lower_line) {
-      drawCageLines(
-        cageFeatures.cage_2_4.upper_line,
-        cageFeatures.cage_2_4.lower_line,
-        cageFeatures.cage_2_4.start_index,
-        cageFeatures.cage_2_4.projected_to_index,
+    // Draw cage_2_4 using pre-computed points
+    if (cageFeatures.cage_2_4?.exists && cageFeatures.cage_2_4?.upper_points && cageFeatures.cage_2_4?.lower_points) {
+      drawCageFromPoints(
+        cageFeatures.cage_2_4.upper_points,
+        cageFeatures.cage_2_4.lower_points,
         '#f59e0b', // amber
         cageFeatures.cage_2_4.broken || false,
-        cageFeatures.cage_2_4.first_break_date
+        cageFeatures.cage_2_4.break_date
       );
     }
 
     // Draw cage_ACB
-    if (cageFeatures.cage_ACB?.exists && cageFeatures.cage_ACB?.upper_line && cageFeatures.cage_ACB?.lower_line) {
-      drawCageLines(
-        cageFeatures.cage_ACB.upper_line,
-        cageFeatures.cage_ACB.lower_line,
-        cageFeatures.cage_ACB.start_index,
-        cageFeatures.cage_ACB.projected_to_index,
+    if (cageFeatures.cage_ACB?.exists && cageFeatures.cage_ACB?.upper_points && cageFeatures.cage_ACB?.lower_points) {
+      drawCageFromPoints(
+        cageFeatures.cage_ACB.upper_points,
+        cageFeatures.cage_ACB.lower_points,
         '#06b6d4', // cyan
-        cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false
+        cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false,
+        cageFeatures.cage_ACB.break_date
       );
     }
 
     // Draw wedge_cage
-    if (cageFeatures.wedge_cage?.exists && cageFeatures.wedge_cage?.upper_line && cageFeatures.wedge_cage?.lower_line) {
-      drawCageLines(
-        cageFeatures.wedge_cage.upper_line,
-        cageFeatures.wedge_cage.lower_line,
-        cageFeatures.wedge_cage.start_index,
-        cageFeatures.wedge_cage.projected_to_index,
+    if (cageFeatures.wedge_cage?.exists && cageFeatures.wedge_cage?.upper_points && cageFeatures.wedge_cage?.lower_points) {
+      drawCageFromPoints(
+        cageFeatures.wedge_cage.upper_points,
+        cageFeatures.wedge_cage.lower_points,
         '#a855f7', // purple
-        cageFeatures.wedge_cage.broken || false
+        cageFeatures.wedge_cage.broken || false,
+        cageFeatures.wedge_cage.break_date
       );
     }
-  }, [analysis?.cage_features, candles, dateToIndex, isReady]);
+  }, [analysis?.cage_features, candles, isReady]);
 
   // Add price lines for key levels
   useEffect(() => {

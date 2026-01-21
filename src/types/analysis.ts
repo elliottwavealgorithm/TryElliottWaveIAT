@@ -39,6 +39,12 @@ export interface CageLine {
   intercept: number;
 }
 
+// Pre-computed point for cage rendering (date + value)
+export interface CagePoint {
+  date: string;
+  value: number;
+}
+
 // Updated cage features with break_strength_atr and line equations
 export interface CageBreakInfo {
   broken: boolean;
@@ -54,9 +60,16 @@ export interface CageCandidate {
   exists: boolean;
   upper_line?: CageLine;
   lower_line?: CageLine;
+  upper_points?: [CagePoint, CagePoint];
+  lower_points?: [CagePoint, CagePoint];
   start_index?: number;
+  start_date?: string;
   anchor_index?: number;
+  anchor_date?: string;
   projected_to_index?: number;
+  projected_to_date?: string;
+  break_index?: number | null;
+  break_date?: string | null;
   w2_idx?: number;
   w3_idx?: number;
   w4_idx?: number;
@@ -77,9 +90,17 @@ export interface CageFeatures {
     // Line equations for drawing
     upper_line?: CageLine;
     lower_line?: CageLine;
+    // Pre-computed points for rendering
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
   cage_2_4_candidates?: CageCandidate[];
   cage_ACB: {
@@ -92,9 +113,17 @@ export interface CageFeatures {
     // Line equations for drawing
     upper_line?: CageLine;
     lower_line?: CageLine;
+    // Pre-computed points for rendering
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
   wedge_cage: {
     exists: boolean;
@@ -106,9 +135,17 @@ export interface CageFeatures {
     // Line equations for drawing
     upper_line?: CageLine;
     lower_line?: CageLine;
+    // Pre-computed points for rendering
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
 }
 
