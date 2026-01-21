@@ -62,6 +62,12 @@ interface CageCandidateBreak {
   break_direction?: 'up' | 'down';
   bars_since_break: number;
   first_break_date?: string;
+  break_index?: number | null;
+}
+
+interface CagePoint {
+  date: string;
+  value: number;
 }
 
 interface CageCandidate {
@@ -69,9 +75,16 @@ interface CageCandidate {
   exists: boolean;
   upper_line?: Line;
   lower_line?: Line;
+  upper_points?: [CagePoint, CagePoint];
+  lower_points?: [CagePoint, CagePoint];
   start_index?: number;
+  start_date?: string;
   anchor_index?: number;
+  anchor_date?: string;
   projected_to_index?: number;
+  projected_to_date?: string;
+  break_index?: number | null;
+  break_date?: string | null;
   w2_idx?: number;
   w3_idx?: number;
   w4_idx?: number;
@@ -90,9 +103,16 @@ interface CageFeatures {
     selected_candidate?: string;
     upper_line?: Line;
     lower_line?: Line;
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
   cage_2_4_candidates: CageCandidate[];
   cage_ACB: {
@@ -103,9 +123,16 @@ interface CageFeatures {
     break_strength_atr: number;
     upper_line?: Line;
     lower_line?: Line;
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
   wedge_cage: {
     exists: boolean;
@@ -115,9 +142,16 @@ interface CageFeatures {
     wedge_type?: 'expanding' | 'contracting';
     upper_line?: Line;
     lower_line?: Line;
+    upper_points?: [CagePoint, CagePoint];
+    lower_points?: [CagePoint, CagePoint];
     start_index?: number;
+    start_date?: string;
     anchor_index?: number;
+    anchor_date?: string;
     projected_to_index?: number;
+    projected_to_date?: string;
+    break_index?: number | null;
+    break_date?: string | null;
   };
 }
 
@@ -600,7 +634,8 @@ function detectCageBreakWithATR(
     break_strength_pct: Math.round(strengthPct * 1000) / 1000,
     break_strength_atr: Math.round(strengthAtr * 100) / 100,
     bars_since_break: barsSince, 
-    first_break_date: breakDate 
+    first_break_date: breakDate,
+    break_index: confirmedBreakIdx >= 0 ? confirmedBreakIdx : null
   };
 }
 
@@ -628,6 +663,7 @@ function generateCageCandidates(
 ): CageCandidate[] {
   const candidates: CageCandidate[] = [];
   const lastCandleIndex = candles.length - 1;
+  const lastCandleDate = candles[lastCandleIndex]?.date || '';
   
   if (pivots.length < 4) {
     return [{ 
@@ -636,6 +672,54 @@ function generateCageCandidates(
       break_info: { broken: false, break_strength_pct: 0, break_strength_atr: 0, bars_since_break: 0 }
     }];
   }
+
+  // Helper to build candidate with dates and points
+  const buildCandidate = (
+    label: string,
+    cage: { upper: Line; lower: Line },
+    startIdx: number,
+    anchorIdx: number,
+    w2Idx: number,
+    w3Idx: number,
+    w4Idx: number
+  ): CageCandidate => {
+    const breakInfo = detectCageBreakWithATR(cage, candles, anchorIdx + 1, atr);
+    const startDate = candles[startIdx]?.date || '';
+    const anchorDate = candles[anchorIdx]?.date || '';
+    
+    // Compute y values at start and end for rendering
+    const upperY1 = getLineValue(cage.upper, startIdx);
+    const upperY2 = getLineValue(cage.upper, lastCandleIndex);
+    const lowerY1 = getLineValue(cage.lower, startIdx);
+    const lowerY2 = getLineValue(cage.lower, lastCandleIndex);
+    
+    return {
+      label,
+      exists: true,
+      upper_line: cage.upper,
+      lower_line: cage.lower,
+      upper_points: [
+        { date: startDate, value: upperY1 },
+        { date: lastCandleDate, value: upperY2 }
+      ],
+      lower_points: [
+        { date: startDate, value: lowerY1 },
+        { date: lastCandleDate, value: lowerY2 }
+      ],
+      start_index: startIdx,
+      start_date: startDate,
+      anchor_index: anchorIdx,
+      anchor_date: anchorDate,
+      projected_to_index: lastCandleIndex,
+      projected_to_date: lastCandleDate,
+      break_index: breakInfo.break_index,
+      break_date: breakInfo.first_break_date || null,
+      w2_idx: w2Idx,
+      w3_idx: w3Idx,
+      w4_idx: w4Idx,
+      break_info: breakInfo
+    };
+  };
 
   // Get all lows and highs
   const lows = pivots.filter(p => p.type === 'low');
@@ -661,20 +745,15 @@ function generateCageCandidates(
           );
           
           if (cage) {
-            const breakInfo = detectCageBreakWithATR(cage, candles, w4.index + 1, atr);
-            candidates.push({
-              label: `cage_L${li}_H${hi}`,
-              exists: true,
-              upper_line: cage.upper,
-              lower_line: cage.lower,
-              start_index: w2.index,
-              anchor_index: w4.index,
-              projected_to_index: lastCandleIndex,
-              w2_idx: w2.index,
-              w3_idx: w3.index,
-              w4_idx: w4.index,
-              break_info: breakInfo
-            });
+            candidates.push(buildCandidate(
+              `cage_L${li}_H${hi}`,
+              cage,
+              w2.index,
+              w4.index,
+              w2.index,
+              w3.index,
+              w4.index
+            ));
           }
         }
       }
@@ -702,20 +781,15 @@ function generateCageCandidates(
         );
         
         if (cage) {
-          const breakInfo = detectCageBreakWithATR(cage, candles, w4.index + 1, atr);
-          candidates.push({
-            label: "cage_prominent",
-            exists: true,
-            upper_line: cage.upper,
-            lower_line: cage.lower,
-            start_index: w2.index,
-            anchor_index: w4.index,
-            projected_to_index: lastCandleIndex,
-            w2_idx: w2.index,
-            w3_idx: w3.index,
-            w4_idx: w4.index,
-            break_info: breakInfo
-          });
+          candidates.push(buildCandidate(
+            "cage_prominent",
+            cage,
+            w2.index,
+            w4.index,
+            w2.index,
+            w3.index,
+            w4.index
+          ));
         }
       }
     }
@@ -723,7 +797,7 @@ function generateCageCandidates(
 
   if (candidates.length === 0) {
     return [{ 
-      label: "no_valid_cage", 
+      label: "no_valid_cage",
       exists: false, 
       break_info: { broken: false, break_strength_pct: 0, break_strength_atr: 0, bars_since_break: 0 }
     }];
@@ -776,6 +850,7 @@ function computeCageFeatures(
   atr: number
 ): CageFeatures {
   const lastCandleIndex = candles.length - 1;
+  const lastCandleDate = candles[lastCandleIndex]?.date || '';
   
   const result: CageFeatures = {
     cage_2_4: {
@@ -821,9 +896,16 @@ function computeCageFeatures(
       selected_candidate: selected.label,
       upper_line: selected.upper_line,
       lower_line: selected.lower_line,
+      upper_points: selected.upper_points,
+      lower_points: selected.lower_points,
       start_index: selected.start_index,
+      start_date: selected.start_date,
       anchor_index: selected.anchor_index,
+      anchor_date: selected.anchor_date,
       projected_to_index: selected.projected_to_index,
+      projected_to_date: selected.projected_to_date,
+      break_index: selected.break_index,
+      break_date: selected.break_date,
     };
   }
 
@@ -838,19 +920,43 @@ function computeCageFeatures(
       );
       
       if (cageACB) {
+        const startIdx = lastThree[0].index;
+        const anchorIdx = lastThree[2].index;
+        const startDate = candles[startIdx]?.date || '';
+        const anchorDate = candles[anchorIdx]?.date || '';
+        
+        // Compute y values for rendering
+        const upperY1 = getLineValue(cageACB.upper, startIdx);
+        const upperY2 = getLineValue(cageACB.upper, lastCandleIndex);
+        const lowerY1 = getLineValue(cageACB.lower, startIdx);
+        const lowerY2 = getLineValue(cageACB.lower, lastCandleIndex);
+        
         result.cage_ACB.exists = true;
         result.cage_ACB.upper_line = cageACB.upper;
         result.cage_ACB.lower_line = cageACB.lower;
-        result.cage_ACB.start_index = lastThree[0].index;
-        result.cage_ACB.anchor_index = lastThree[2].index;
+        result.cage_ACB.upper_points = [
+          { date: startDate, value: upperY1 },
+          { date: lastCandleDate, value: upperY2 }
+        ];
+        result.cage_ACB.lower_points = [
+          { date: startDate, value: lowerY1 },
+          { date: lastCandleDate, value: lowerY2 }
+        ];
+        result.cage_ACB.start_index = startIdx;
+        result.cage_ACB.start_date = startDate;
+        result.cage_ACB.anchor_index = anchorIdx;
+        result.cage_ACB.anchor_date = anchorDate;
         result.cage_ACB.projected_to_index = lastCandleIndex;
+        result.cage_ACB.projected_to_date = lastCandleDate;
         
-        const breakResult = detectCageBreakWithATR(cageACB, candles, lastThree[2].index + 1, atr);
+        const breakResult = detectCageBreakWithATR(cageACB, candles, anchorIdx + 1, atr);
         if (breakResult.broken) {
           result.cage_ACB.broken_up = breakResult.break_direction === 'up';
           result.cage_ACB.broken_down = breakResult.break_direction === 'down';
           result.cage_ACB.break_strength_pct = breakResult.break_strength_pct;
           result.cage_ACB.break_strength_atr = breakResult.break_strength_atr;
+          result.cage_ACB.break_index = breakResult.break_index;
+          result.cage_ACB.break_date = breakResult.first_break_date || null;
         }
       }
     }
@@ -869,15 +975,41 @@ function computeCageFeatures(
     const highs = lastSixPivots.filter(p => p.type === 'high').slice(-2);
     const lows = lastSixPivots.filter(p => p.type === 'low').slice(-2);
     if (highs.length >= 2 && lows.length >= 2) {
-      result.wedge_cage.start_index = Math.min(highs[0].index, lows[0].index);
-      result.wedge_cage.anchor_index = Math.max(highs[1].index, lows[1].index);
+      const startIdx = Math.min(highs[0].index, lows[0].index);
+      const anchorIdx = Math.max(highs[1].index, lows[1].index);
+      const startDate = candles[startIdx]?.date || '';
+      const anchorDate = candles[anchorIdx]?.date || '';
+      
+      // Compute y values for rendering
+      const upperY1 = getLineValue(wedge.upper, startIdx);
+      const upperY2 = getLineValue(wedge.upper, lastCandleIndex);
+      const lowerY1 = getLineValue(wedge.lower, startIdx);
+      const lowerY2 = getLineValue(wedge.lower, lastCandleIndex);
+      
+      result.wedge_cage.upper_points = [
+        { date: startDate, value: upperY1 },
+        { date: lastCandleDate, value: upperY2 }
+      ];
+      result.wedge_cage.lower_points = [
+        { date: startDate, value: lowerY1 },
+        { date: lastCandleDate, value: lowerY2 }
+      ];
+      result.wedge_cage.start_index = startIdx;
+      result.wedge_cage.start_date = startDate;
+      result.wedge_cage.anchor_index = anchorIdx;
+      result.wedge_cage.anchor_date = anchorDate;
       result.wedge_cage.projected_to_index = lastCandleIndex;
+      result.wedge_cage.projected_to_date = lastCandleDate;
     }
     
     const breakResult = detectCageBreakWithATR({ upper: wedge.upper, lower: wedge.lower }, candles, pivots[pivots.length - 1].index + 1, atr);
     result.wedge_cage.broken = breakResult.broken;
     result.wedge_cage.break_strength_pct = breakResult.break_strength_pct;
     result.wedge_cage.break_strength_atr = breakResult.break_strength_atr;
+    if (breakResult.broken) {
+      result.wedge_cage.break_index = breakResult.break_index;
+      result.wedge_cage.break_date = breakResult.first_break_date || null;
+    }
   }
 
   return result;
