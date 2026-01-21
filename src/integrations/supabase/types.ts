@@ -62,6 +62,47 @@ export type Database = {
         }
         Relationships: []
       }
+      deep_analyses: {
+        Row: {
+          analysis_json: Json
+          created_at: string
+          evidence_score: number | null
+          id: string
+          primary_pattern: string | null
+          scan_id: string
+          symbol: string
+          timeframe: string
+        }
+        Insert: {
+          analysis_json: Json
+          created_at?: string
+          evidence_score?: number | null
+          id?: string
+          primary_pattern?: string | null
+          scan_id: string
+          symbol: string
+          timeframe?: string
+        }
+        Update: {
+          analysis_json?: Json
+          created_at?: string
+          evidence_score?: number | null
+          id?: string
+          primary_pattern?: string | null
+          scan_id?: string
+          symbol?: string
+          timeframe?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deep_analyses_scan_id_fkey"
+            columns: ["scan_id"]
+            isOneToOne: false
+            referencedRelation: "scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       instruments: {
         Row: {
           created_at: string
@@ -116,40 +157,123 @@ export type Database = {
         }
         Relationships: []
       }
+      scan_symbols: {
+        Row: {
+          atr_pct: number | null
+          attention_score_13f: number | null
+          avg_volume_30d: number | null
+          created_at: string
+          error: string | null
+          final_score: number | null
+          fundamentals: Json | null
+          fundamentals_score: number | null
+          id: string
+          last_price: number | null
+          liquidity_score: number | null
+          pivot_cleanliness: number | null
+          regime: string | null
+          scan_id: string
+          structure_score: number | null
+          symbol: string
+          volatility_score: number | null
+        }
+        Insert: {
+          atr_pct?: number | null
+          attention_score_13f?: number | null
+          avg_volume_30d?: number | null
+          created_at?: string
+          error?: string | null
+          final_score?: number | null
+          fundamentals?: Json | null
+          fundamentals_score?: number | null
+          id?: string
+          last_price?: number | null
+          liquidity_score?: number | null
+          pivot_cleanliness?: number | null
+          regime?: string | null
+          scan_id: string
+          structure_score?: number | null
+          symbol: string
+          volatility_score?: number | null
+        }
+        Update: {
+          atr_pct?: number | null
+          attention_score_13f?: number | null
+          avg_volume_30d?: number | null
+          created_at?: string
+          error?: string | null
+          final_score?: number | null
+          fundamentals?: Json | null
+          fundamentals_score?: number | null
+          id?: string
+          last_price?: number | null
+          liquidity_score?: number | null
+          pivot_cleanliness?: number | null
+          regime?: string | null
+          scan_id?: string
+          structure_score?: number | null
+          symbol?: string
+          volatility_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scan_symbols_scan_id_fkey"
+            columns: ["scan_id"]
+            isOneToOne: false
+            referencedRelation: "scans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scans: {
         Row: {
+          base_timeframe: string
           completed_at: string | null
           completed_count: number | null
           created_at: string
           id: string
+          include_fundamentals: boolean | null
+          include_structure_score: boolean | null
           params: Json
           results_summary: Json | null
           status: string
           symbols_count: number | null
+          top_n: number | null
+          universe_size: number | null
           user_id: string
           watchlist_id: string | null
         }
         Insert: {
+          base_timeframe?: string
           completed_at?: string | null
           completed_count?: number | null
           created_at?: string
           id?: string
+          include_fundamentals?: boolean | null
+          include_structure_score?: boolean | null
           params?: Json
           results_summary?: Json | null
           status?: string
           symbols_count?: number | null
+          top_n?: number | null
+          universe_size?: number | null
           user_id: string
           watchlist_id?: string | null
         }
         Update: {
+          base_timeframe?: string
           completed_at?: string | null
           completed_count?: number | null
           created_at?: string
           id?: string
+          include_fundamentals?: boolean | null
+          include_structure_score?: boolean | null
           params?: Json
           results_summary?: Json | null
           status?: string
           symbols_count?: number | null
+          top_n?: number | null
+          universe_size?: number | null
           user_id?: string
           watchlist_id?: string | null
         }

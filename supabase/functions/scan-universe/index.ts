@@ -1,7 +1,8 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const API_VERSION = "0.2";
+const API_VERSION = "0.3";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,6 +43,11 @@ interface SymbolMetrics {
   last_price: number;
   avg_volume_30d: number;
   atr_pct: number;
+  // Structure scoring fields
+  structure_score?: number;
+  fundamentals_score?: number;
+  attention_score_13f?: number;
+  final_score?: number;
   // Deep precheck fields (only for topN)
   ew_structural_score?: number;
   ew_ready?: boolean;
@@ -68,7 +74,10 @@ interface ScanRequest {
   deep_timeframes?: string[];
   topN?: number;
   include_fundamentals?: boolean;
+  include_structure_score?: boolean;
   run_deep_precheck?: boolean;
+  persist?: boolean;
+  user_id?: string;
 }
 
 interface ScanResult {
@@ -80,6 +89,7 @@ interface ScanResult {
   rankings: SymbolMetrics[];
   top_symbols: string[];
   created_at: string;
+  persisted?: boolean;
 }
 
 // ============================================================================
@@ -631,14 +641,52 @@ serve(async (req) => {
       base_timeframe = '1D',
       topN = 10,
       include_fundamentals = false,
-      run_deep_precheck = false
+      include_structure_score = false,
+      run_deep_precheck = false,
+      persist = false,
+      user_id
     } = body;
 
     if (!symbols || !Array.isArray(symbols) || symbols.length === 0) {
       throw new Error('symbols array is required');
     }
 
-    console.log(`[v${API_VERSION}] Scanning ${symbols.length} symbols with base_timeframe=${base_timeframe}, topN=${topN}, deep_precheck=${run_deep_precheck}`);
+    console.log(`[v${API_VERSION}] Scanning ${symbols.length} symbols with base_timeframe=${base_timeframe}, topN=${topN}, structure=${include_structure_score}, persist=${persist}`);
+
+    // Initialize Supabase client for persistence
+    let supabase: any = null;
+    let scanId: string | null = null;
+    
+    if (persist) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      supabase = createClient(supabaseUrl, supabaseKey);
+      
+      // Create scan record
+      if (user_id) {
+        const { data: scanData, error: scanError } = await supabase
+          .from('scans')
+          .insert({
+            user_id,
+            base_timeframe,
+            universe_size: symbols.length,
+            top_n: topN,
+            include_fundamentals,
+            include_structure_score,
+            status: 'running',
+            params: { symbols }
+          })
+          .select('id')
+          .single();
+        
+        if (scanError) {
+          console.error('Failed to create scan record:', scanError);
+        } else {
+          scanId = scanData.id;
+          console.log(`Created scan record: ${scanId}`);
+        }
+      }
+    }
 
     const rankings: SymbolMetrics[] = [];
     let processed = 0;
@@ -696,8 +744,48 @@ serve(async (req) => {
     // Sort by pre_filter_score descending
     rankings.sort((a, b) => b.pre_filter_score - a.pre_filter_score);
 
-    // Get top N symbols for deep analysis
+    // Get top N symbols for structure scoring
     const topRankings = rankings.filter(r => !r.error).slice(0, topN);
+    
+    // Run structure scoring for topN if requested
+    if (include_structure_score && topRankings.length > 0) {
+      console.log(`Running structure scoring for top ${topRankings.length} symbols...`);
+      
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      
+      // Process in smaller batches for structure scoring
+      for (let i = 0; i < topRankings.length; i += 3) {
+        const batch = topRankings.slice(i, i + 3);
+        
+        await Promise.all(batch.map(async (ranking) => {
+          try {
+            const response = await fetch(`${supabaseUrl}/functions/v1/prefilter-elliott`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseKey}`,
+                'apikey': supabaseKey
+              },
+              body: JSON.stringify({ symbol: ranking.symbol, timeframe: base_timeframe })
+            });
+            
+            if (response.ok) {
+              const prefilterData = await response.json();
+              ranking.structure_score = prefilterData.structure_score || 0;
+              ranking.ew_notes = prefilterData.notes?.join('; ') || '';
+            }
+          } catch (error) {
+            console.error(`Structure score failed for ${ranking.symbol}:`, error);
+            ranking.structure_score = 0;
+          }
+        }));
+        
+        if (i + 3 < topRankings.length) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+    }
     
     // Run deep precheck for topN if requested
     if (run_deep_precheck && topRankings.length > 0) {
@@ -719,26 +807,112 @@ serve(async (req) => {
           ranking.ew_notes = 'Precheck failed';
         }
       }
+    }
+
+    // Calculate fundamentals_score and final_score
+    for (const ranking of topRankings) {
+      // Fundamentals score (simple heuristic)
+      let fundScore = 50; // Base score
+      if (ranking.fundamentals) {
+        const f = ranking.fundamentals;
+        if (f.earningsGrowth !== null && f.earningsGrowth > 0) fundScore += 15;
+        if (f.revenueGrowth !== null && f.revenueGrowth > 0) fundScore += 10;
+        if (f.forwardPE !== null && f.forwardPE > 0 && f.forwardPE < 30) fundScore += 10;
+        if (!f.marketCap) fundScore -= 10; // Penalize missing data
+      }
+      ranking.fundamentals_score = Math.min(100, Math.max(0, fundScore));
       
-      // Re-sort incorporating ew_structural_score
-      topRankings.sort((a, b) => {
-        const scoreA = a.pre_filter_score * 0.6 + (a.ew_structural_score || 0) * 0.4;
-        const scoreB = b.pre_filter_score * 0.6 + (b.ew_structural_score || 0) * 0.4;
-        return scoreB - scoreA;
-      });
+      // Attention score placeholder
+      ranking.attention_score_13f = null;
+      
+      // Final score: weighted combination
+      // 55% pre_filter + 30% structure + 15% fundamentals
+      const structScore = ranking.structure_score ?? ranking.ew_structural_score ?? ranking.pre_filter_score;
+      ranking.final_score = Math.round(
+        (ranking.pre_filter_score * 0.55 +
+        structScore * 0.30 +
+        (ranking.fundamentals_score || 50) * 0.15) * 10
+      ) / 10;
+    }
+
+    // Re-sort by final_score
+    topRankings.sort((a, b) => (b.final_score || 0) - (a.final_score || 0));
+
+    // Update all rankings with final scores
+    for (const ranking of rankings) {
+      const top = topRankings.find(t => t.symbol === ranking.symbol);
+      if (top) {
+        ranking.structure_score = top.structure_score;
+        ranking.fundamentals_score = top.fundamentals_score;
+        ranking.final_score = top.final_score;
+        ranking.ew_structural_score = top.ew_structural_score;
+        ranking.ew_ready = top.ew_ready;
+        ranking.ew_notes = top.ew_notes;
+      }
     }
 
     const top_symbols = topRankings.map(r => r.symbol);
+    const createdAt = new Date().toISOString();
+    
+    // Persist scan_symbols if requested
+    let persisted = false;
+    if (persist && supabase && scanId) {
+      const symbolRows = rankings.map(r => ({
+        scan_id: scanId,
+        symbol: r.symbol,
+        final_score: r.final_score ?? r.pre_filter_score,
+        liquidity_score: r.liquidity_score,
+        volatility_score: r.volatility_score,
+        regime: r.regime,
+        pivot_cleanliness: r.pivot_cleanliness,
+        atr_pct: r.atr_pct,
+        structure_score: r.structure_score ?? null,
+        fundamentals_score: r.fundamentals_score ?? null,
+        attention_score_13f: r.attention_score_13f ?? null,
+        last_price: r.last_price,
+        avg_volume_30d: r.avg_volume_30d,
+        fundamentals: r.fundamentals ?? null,
+        error: r.error ?? null
+      }));
+      
+      const { error: insertError } = await supabase
+        .from('scan_symbols')
+        .insert(symbolRows);
+      
+      if (insertError) {
+        console.error('Failed to persist scan_symbols:', insertError);
+      } else {
+        persisted = true;
+        console.log(`Persisted ${symbolRows.length} scan_symbols`);
+      }
+      
+      // Update scan status
+      await supabase
+        .from('scans')
+        .update({
+          status: 'completed',
+          completed_at: createdAt,
+          completed_count: processed,
+          symbols_count: symbols.length,
+          results_summary: {
+            processed,
+            failed,
+            top_symbols
+          }
+        })
+        .eq('id', scanId);
+    }
 
     const result: ScanResult = {
-      scan_id: crypto.randomUUID(),
+      scan_id: scanId || crypto.randomUUID(),
       api_version: API_VERSION,
       total_symbols: symbols.length,
       processed,
       failed,
       rankings,
       top_symbols,
-      created_at: new Date().toISOString()
+      created_at: createdAt,
+      persisted
     };
 
     console.log(`Scan complete: ${processed} processed, ${failed} failed, top ${top_symbols.length} symbols selected`);

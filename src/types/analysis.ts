@@ -225,6 +225,11 @@ export interface SymbolMetrics {
   last_price: number;
   avg_volume_30d: number;
   atr_pct: number;
+  // Structure scoring fields (v0.3)
+  structure_score?: number;
+  fundamentals_score?: number;
+  attention_score_13f?: number | null;
+  final_score?: number;
   // Deep precheck fields (v0.2)
   ew_structural_score?: number;
   ew_ready?: boolean;
@@ -242,6 +247,23 @@ export interface ScanResult {
   rankings: SymbolMetrics[];
   top_symbols: string[];
   created_at: string;
+  persisted?: boolean;
+}
+
+// Deep analysis result from run-deep-analysis
+export interface DeepAnalysisResult {
+  scan_id: string;
+  total: number;
+  completed: number;
+  failed: number;
+  results: Array<{
+    symbol: string;
+    success: boolean;
+    evidence_score?: number;
+    primary_pattern?: string;
+    error?: string;
+  }>;
+  api_version: string;
 }
 
 // ============================================================================
