@@ -53,6 +53,8 @@ export interface CageBreakInfo {
   break_strength_atr: number;
   bars_since_break: number;
   first_break_date?: string;
+  break_price?: number | null;
+  boundary_value_at_break?: number | null;
 }
 
 export interface CageCandidate {
