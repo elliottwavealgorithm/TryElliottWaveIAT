@@ -87,19 +87,22 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
     }
   }
 
-  // Try Arabic digit 1-5
-  const arabicMatch = raw.match(/[1-5]/);
+  // Try Arabic digit 1-5 with word boundary to avoid matching digits inside numbers
+  const arabicMatch = raw.match(/\b([1-5])\b/);
   if (arabicMatch) {
-    result.waveNum = parseInt(arabicMatch[0], 10);
-    result.colorKey = arabicMatch[0];
+    result.waveNum = parseInt(arabicMatch[1], 10);
+    result.colorKey = arabicMatch[1];
   }
 
-  // Try Roman numerals if no Arabic found
+  // Try Roman numerals if no Arabic found (case-insensitive, convert to upper for mapping)
   if (!result.waveNum) {
-    const romanMatch = raw.match(/\b(IV|III|II|I|V|iv|iii|ii|i|v)\b/);
-    if (romanMatch && ROMAN_TO_ARABIC[romanMatch[1]]) {
-      result.waveNum = ROMAN_TO_ARABIC[romanMatch[1]];
-      result.colorKey = String(result.waveNum);
+    const romanMatch = raw.match(/\b(IV|III|II|I|V)\b/i);
+    if (romanMatch) {
+      const romanUpper = romanMatch[1].toUpperCase();
+      if (ROMAN_TO_ARABIC[romanUpper]) {
+        result.waveNum = ROMAN_TO_ARABIC[romanUpper];
+        result.colorKey = String(result.waveNum);
+      }
     }
   }
 
@@ -139,22 +142,56 @@ function isImpulseWave(wave: string): boolean {
   return norm.waveNum !== null && [1, 2, 3, 4, 5].includes(norm.waveNum);
 }
 
+// Degree priority: more granular = higher priority for tie-breaking
+const DEGREE_PRIORITY: Record<string, number> = {
+  'Minute': 6,
+  'Minor': 5,
+  'Intermediate': 4,
+  'Primary': 3,
+  'Cycle': 2,
+  'Supercycle': 1,
+};
+
 function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | null {
+  // Only consider last 7 wave points for recency weighting
+  const recentPoints = points.slice(-7);
+  
   const degreeCounts: Record<string, number> = {};
-  for (const p of points) {
+  for (const p of recentPoints) {
     if (p.norm.degree) {
       degreeCounts[p.norm.degree] = (degreeCounts[p.norm.degree] || 0) + 1;
     }
   }
-  let maxDeg: string | null = null;
-  let maxCount = 0;
-  for (const [deg, count] of Object.entries(degreeCounts)) {
-    if (count > maxCount) {
-      maxCount = count;
-      maxDeg = deg;
+  
+  if (Object.keys(degreeCounts).length === 0) {
+    return null;
+  }
+  
+  // Find max count
+  const maxCount = Math.max(...Object.values(degreeCounts));
+  
+  // Get all degrees with max count (potential ties)
+  const topDegrees = Object.entries(degreeCounts)
+    .filter(([_, count]) => count === maxCount)
+    .map(([deg]) => deg);
+  
+  if (topDegrees.length === 1) {
+    return topDegrees[0];
+  }
+  
+  // Break tie: prefer more granular degree (higher priority number)
+  let bestDeg = topDegrees[0];
+  let bestPriority = DEGREE_PRIORITY[bestDeg] || 0;
+  
+  for (const deg of topDegrees) {
+    const priority = DEGREE_PRIORITY[deg] || 0;
+    if (priority > bestPriority) {
+      bestPriority = priority;
+      bestDeg = deg;
     }
   }
-  return maxDeg;
+  
+  return bestDeg;
 }
 
 export function LightweightChart({ 
@@ -378,14 +415,16 @@ export function LightweightChart({
 
     // Draw cage 2-4 if exists and not broken
     if (cageFeatures.cage_2_4?.exists && !cageFeatures.cage_2_4?.broken) {
-      // Find wave points with degree preference
+      // Find wave points with degree preference, fallback to any degree
       const findWaveByNum = (num: number) => {
+        // First try: match dominant degree if available
         if (dominantDegree) {
           const match = normalizedActiveWavePoints.find(
             wp => wp.norm.degree === dominantDegree && wp.norm.waveNum === num
           );
           if (match) return match;
         }
+        // Fallback: any wave point with matching waveNum (regardless of degree)
         return normalizedActiveWavePoints.find(wp => wp.norm.waveNum === num);
       };
 
