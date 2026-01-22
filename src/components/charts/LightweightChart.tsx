@@ -1,19 +1,30 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, Time, LineStyle, BusinessDay } from 'lightweight-charts';
 import { Candle, ElliottAnalysisResult, WavePoint } from '@/types/analysis';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { TrendingUp, Grid3X3, Target } from 'lucide-react';
+import { TrendingUp, Grid3X3, Target, AlertTriangle } from 'lucide-react';
 
-// Marker type for wave labels (v5 uses different API)
-interface WaveMarker {
-  time: Time;
-  position: 'aboveBar' | 'belowBar';
-  color: string;
-  shape: 'circle' | 'square' | 'arrowUp' | 'arrowDown';
-  text: string;
-  size: number;
+// ============================================================================
+// TIME FORMAT HELPER - Convert YYYY-MM-DD to BusinessDay
+// ============================================================================
+
+function toBusinessDay(dateStr: string): BusinessDay {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return { year: y, month: m, day: d };
 }
+
+function isValidDateStr(dateStr: string): boolean {
+  if (!dateStr || typeof dateStr !== 'string') return false;
+  const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return false;
+  const [, y, m, d] = match.map(Number);
+  return y > 1900 && y < 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31;
+}
+
+// ============================================================================
+// TYPES
+// ============================================================================
 
 interface NormalizedWaveLabel {
   raw: string;
@@ -30,6 +41,11 @@ export interface ChartOverlayToggles {
   showLevels: boolean;
 }
 
+interface ChartWarning {
+  type: 'no_candles' | 'no_waves' | 'waves_outside_range' | 'no_cages';
+  message: string;
+}
+
 interface LightweightChartProps {
   candles: Candle[];
   symbol: string;
@@ -40,12 +56,15 @@ interface LightweightChartProps {
   onToggleChange?: (toggles: ChartOverlayToggles) => void;
 }
 
-// Wave colors by type
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const WAVE_COLORS = {
-  impulse: '#3b82f6', // blue
-  correction: '#f97316', // orange
-  primary: '#22c55e', // green for primary count lines
-  alternate: '#a855f7', // purple for alternate
+  impulse: '#3b82f6',
+  correction: '#f97316',
+  primary: '#22c55e',
+  alternate: '#a855f7',
 };
 
 const WAVE_LABEL_COLORS: Record<string, string> = {
@@ -76,6 +95,19 @@ const ROMAN_TO_ARABIC: Record<string, number> = {
   'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
 };
 
+const DEGREE_PRIORITY: Record<string, number> = {
+  'Minute': 6,
+  'Minor': 5,
+  'Intermediate': 4,
+  'Primary': 3,
+  'Cycle': 2,
+  'Supercycle': 1,
+};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
 function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
   const result: NormalizedWaveLabel = {
     raw,
@@ -89,7 +121,6 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
   const upper = raw.toUpperCase();
   const lower = raw.toLowerCase();
 
-  // Extract degree if present
   const degreeKeywords = ['supercycle', 'cycle', 'primary', 'intermediate', 'minor', 'minute'];
   for (const deg of degreeKeywords) {
     if (lower.includes(deg)) {
@@ -98,14 +129,12 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
     }
   }
 
-  // Try Arabic digit 1-5 with word boundary to avoid matching digits inside numbers
   const arabicMatch = raw.match(/\b([1-5])\b/);
   if (arabicMatch) {
     result.waveNum = parseInt(arabicMatch[1], 10);
     result.colorKey = arabicMatch[1];
   }
 
-  // Try Roman numerals if no Arabic found (case-insensitive, convert to upper for mapping)
   if (!result.waveNum) {
     const romanMatch = raw.match(/\b(IV|III|II|I|V)\b/i);
     if (romanMatch) {
@@ -117,7 +146,6 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
     }
   }
 
-  // Check for correction letters A, B, C
   const abcMatch = upper.match(/\b([ABC])\b|\(([ABC])\)/);
   if (abcMatch) {
     const letter = (abcMatch[1] || abcMatch[2]) as 'A' | 'B' | 'C';
@@ -127,7 +155,6 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
     }
   }
 
-  // Check for W, X, Y
   if (!result.waveNum && !result.waveABC) {
     const wxyMatch = upper.match(/\b([WXY])\b/);
     if (wxyMatch) {
@@ -135,7 +162,6 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
     }
   }
 
-  // Build compact display
   const degAbbrev = result.degree ? DEGREE_ABBREV[result.degree.toLowerCase()] || '' : '';
   if (result.waveNum) {
     result.display = degAbbrev ? `${degAbbrev}${result.waveNum}` : String(result.waveNum);
@@ -148,49 +174,25 @@ function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
   return result;
 }
 
-function isImpulseWave(wave: string): boolean {
-  const norm = normalizeWaveLabel(wave);
-  return norm.waveNum !== null && [1, 2, 3, 4, 5].includes(norm.waveNum);
-}
-
-// Degree priority: more granular = higher priority for tie-breaking
-const DEGREE_PRIORITY: Record<string, number> = {
-  'Minute': 6,
-  'Minor': 5,
-  'Intermediate': 4,
-  'Primary': 3,
-  'Cycle': 2,
-  'Supercycle': 1,
-};
-
 function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | null {
-  // Only consider last 7 wave points for recency weighting
   const recentPoints = points.slice(-7);
-  
   const degreeCounts: Record<string, number> = {};
+  
   for (const p of recentPoints) {
     if (p.norm.degree) {
       degreeCounts[p.norm.degree] = (degreeCounts[p.norm.degree] || 0) + 1;
     }
   }
   
-  if (Object.keys(degreeCounts).length === 0) {
-    return null;
-  }
+  if (Object.keys(degreeCounts).length === 0) return null;
   
-  // Find max count
   const maxCount = Math.max(...Object.values(degreeCounts));
-  
-  // Get all degrees with max count (potential ties)
   const topDegrees = Object.entries(degreeCounts)
     .filter(([_, count]) => count === maxCount)
     .map(([deg]) => deg);
   
-  if (topDegrees.length === 1) {
-    return topDegrees[0];
-  }
+  if (topDegrees.length === 1) return topDegrees[0];
   
-  // Break tie: prefer more granular degree (higher priority number)
   let bestDeg = topDegrees[0];
   let bestPriority = DEGREE_PRIORITY[bestDeg] || 0;
   
@@ -204,6 +206,10 @@ function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | n
   
   return bestDeg;
 }
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 export function LightweightChart({ 
   candles, 
@@ -221,8 +227,8 @@ export function LightweightChart({
   const cageSeriesRefs = useRef<ISeriesApi<'Line'>[]>([]);
   const levelLinesRef = useRef<any[]>([]);
   const [isReady, setIsReady] = useState(false);
+  const [warnings, setWarnings] = useState<ChartWarning[]>([]);
   
-  // Internal toggle state (default all ON)
   const [internalToggles, setInternalToggles] = useState<ChartOverlayToggles>({
     showWaves: true,
     showCages: true,
@@ -240,33 +246,71 @@ export function LightweightChart({
     }
   };
 
+  // Get candle date range for validation
+  const candleDateRange = useMemo(() => {
+    if (candles.length === 0) return { min: '', max: '' };
+    return {
+      min: candles[0].date,
+      max: candles[candles.length - 1].date
+    };
+  }, [candles]);
+
   // Get active wave points (primary or alternate)
   const activeWavePoints: WavePoint[] = useMemo(() => {
     if (!analysis) return [];
     
-    // If alternate selected and has wave data, use alternate waves
     if (selectedAlternateIndex !== null && 
         analysis.alternate_counts[selectedAlternateIndex]?.waves &&
         analysis.alternate_counts[selectedAlternateIndex].waves!.length > 0) {
       return analysis.alternate_counts[selectedAlternateIndex].waves!;
     }
     
-    // Default to primary count waves
     return analysis.primary_count?.waves || [];
   }, [analysis, selectedAlternateIndex]);
 
-  // Normalize wave labels for matching and display
+  // Normalize and validate wave labels
   const normalizedActiveWavePoints = useMemo(() => {
-    return activeWavePoints.map(wp => ({
-      ...wp,
-      norm: normalizeWaveLabel(wp.wave),
-    }));
+    return activeWavePoints
+      .filter(wp => isValidDateStr(wp.date))
+      .map(wp => ({
+        ...wp,
+        norm: normalizeWaveLabel(wp.wave),
+      }));
   }, [activeWavePoints]);
 
-  // Find dominant degree for cage matching
   const dominantDegree = useMemo(() => {
     return findDominantDegree(normalizedActiveWavePoints);
   }, [normalizedActiveWavePoints]);
+
+  // Validate data and set warnings
+  useEffect(() => {
+    const newWarnings: ChartWarning[] = [];
+    
+    if (candles.length === 0) {
+      newWarnings.push({ type: 'no_candles', message: 'No candles returned from backend' });
+      console.warn('[LightweightChart] No candles data');
+    }
+    
+    if (analysis && (!analysis.primary_count?.waves || analysis.primary_count.waves.length === 0)) {
+      newWarnings.push({ type: 'no_waves', message: 'No wave points in analysis' });
+      console.warn('[LightweightChart] No wave points in primary_count.waves');
+    }
+    
+    if (activeWavePoints.length > 0 && candles.length > 0) {
+      const outsideRange = activeWavePoints.filter(wp => 
+        wp.date < candleDateRange.min || wp.date > candleDateRange.max
+      );
+      if (outsideRange.length > 0) {
+        newWarnings.push({ 
+          type: 'waves_outside_range', 
+          message: `${outsideRange.length} wave points outside candle range` 
+        });
+        console.warn('[LightweightChart] Wave points outside candle range:', outsideRange);
+      }
+    }
+    
+    setWarnings(newWarnings);
+  }, [candles, analysis, activeWavePoints, candleDateRange]);
 
   // Initialize chart
   useEffect(() => {
@@ -296,7 +340,6 @@ export function LightweightChart({
       },
     });
 
-    // Create candlestick series (v4 API with fallback)
     let candleSeries: any;
     if (typeof (chart as any).addCandlestickSeries === 'function') {
       candleSeries = (chart as any).addCandlestickSeries({
@@ -344,18 +387,26 @@ export function LightweightChart({
     };
   }, [height]);
 
-  // Update candle data
+  // Update candle data with BusinessDay format
   useEffect(() => {
     if (!candleSeriesRef.current || !isReady || candles.length === 0) return;
 
-    const chartData = candles.map(c => ({
-      time: c.date as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
+    const chartData = candles
+      .filter(c => isValidDateStr(c.date))
+      .map(c => ({
+        time: toBusinessDay(c.date) as Time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
 
+    if (chartData.length === 0) {
+      console.warn('[LightweightChart] No valid candle dates after filtering');
+      return;
+    }
+
+    console.log(`[LightweightChart] Setting ${chartData.length} candles`);
     candleSeriesRef.current.setData(chartData);
     
     if (chartRef.current) {
@@ -363,7 +414,7 @@ export function LightweightChart({
     }
   }, [candles, isReady]);
 
-  // Add wave markers and lines (respects showWaves toggle)
+  // Add wave lines with BusinessDay format
   useEffect(() => {
     if (!candleSeriesRef.current || !isReady || !chartRef.current) return;
 
@@ -377,55 +428,81 @@ export function LightweightChart({
       waveLineSeriesRef.current = null;
     }
 
-    // Skip if waves toggle is off or no wave data
-    if (!toggles.showWaves || !activeWavePoints || activeWavePoints.length === 0) {
+    if (!toggles.showWaves || normalizedActiveWavePoints.length === 0) {
       return;
     }
 
-    // Create line series connecting wave points
-    if (activeWavePoints.length >= 2) {
-      try {
-        const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
-        
-        let lineSeries: any;
-        if (typeof (chart as any).addLineSeries === 'function') {
-          lineSeries = (chart as any).addLineSeries({
-            color: lineColor,
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-        } else {
-          lineSeries = (chart as any).addSeries({
-            type: 'Line',
-          }, {
-            color: lineColor,
-            lineWidth: 2,
-          });
-        }
+    // Filter wave points to those within candle range
+    const validWavePoints = normalizedActiveWavePoints.filter(wp => 
+      wp.date >= candleDateRange.min && wp.date <= candleDateRange.max
+    );
 
-        const lineData = activeWavePoints.map(wp => ({
-          time: wp.date as Time,
-          value: wp.price,
-        }));
-
-        lineSeries.setData(lineData);
-        waveLineSeriesRef.current = lineSeries;
-      } catch (e) {
-        console.warn('Failed to create wave lines:', e);
-      }
+    if (validWavePoints.length < 2) {
+      console.warn('[LightweightChart] Less than 2 valid wave points within candle range');
+      return;
     }
-  }, [activeWavePoints, isReady, selectedAlternateIndex, toggles.showWaves]);
 
-  // Draw cage lines using backend-provided pre-computed points (respects showCages toggle)
+    try {
+      const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
+      
+      let lineSeries: any;
+      if (typeof (chart as any).addLineSeries === 'function') {
+        lineSeries = (chart as any).addLineSeries({
+          color: lineColor,
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          crosshairMarkerVisible: true,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+      } else {
+        lineSeries = (chart as any).addSeries({
+          type: 'Line',
+        }, {
+          color: lineColor,
+          lineWidth: 2,
+        });
+      }
+
+      const lineData = validWavePoints.map(wp => ({
+        time: toBusinessDay(wp.date) as Time,
+        value: wp.price,
+      }));
+
+      console.log(`[LightweightChart] Drawing wave line with ${lineData.length} points`);
+      lineSeries.setData(lineData);
+      waveLineSeriesRef.current = lineSeries;
+
+      // Add markers for wave labels
+      try {
+        const markers = validWavePoints.map(wp => {
+          const isLow = wp.price <= Math.min(...validWavePoints.map(p => p.price)) * 1.02;
+          return {
+            time: toBusinessDay(wp.date) as Time,
+            position: isLow ? 'belowBar' : 'aboveBar',
+            color: WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280',
+            shape: 'circle',
+            text: wp.norm.display,
+            size: 1,
+          };
+        });
+        (candleSeriesRef.current as any).setMarkers?.(markers);
+      } catch (markerError) {
+        console.warn('[LightweightChart] Could not set markers:', markerError);
+      }
+
+    } catch (e) {
+      console.warn('[LightweightChart] Failed to create wave lines:', e);
+    }
+  }, [normalizedActiveWavePoints, isReady, selectedAlternateIndex, toggles.showWaves, candleDateRange]);
+
+  // Draw cage lines with BusinessDay format
   useEffect(() => {
     if (!chartRef.current || !isReady) return;
 
     const chart = chartRef.current;
 
-    // Always clear previous cage lines first
+    // Clear previous cage lines
     cageSeriesRefs.current.forEach(series => {
       try {
         chart.removeSeries(series);
@@ -433,16 +510,17 @@ export function LightweightChart({
     });
     cageSeriesRefs.current = [];
 
-    // Exit if cages toggle is off or no cage features
-    if (!toggles.showCages || !analysis?.cage_features) return;
+    if (!toggles.showCages || !analysis?.cage_features) {
+      console.log('[LightweightChart] Cages toggle off or no cage_features');
+      return;
+    }
 
     const cageFeatures = analysis.cage_features;
 
-    // Helper to create a line series with proper styling
     const createLineSeries = (color: string, isBroken: boolean): any => {
       if (typeof (chart as any).addLineSeries === 'function') {
         return (chart as any).addLineSeries({
-          color: isBroken ? `${color}60` : color, // More opacity reduction if broken
+          color: isBroken ? `${color}60` : color,
           lineWidth: isBroken ? 1 : 2,
           lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
           crosshairMarkerVisible: false,
@@ -453,147 +531,91 @@ export function LightweightChart({
         return (chart as any).addSeries({ type: 'Line' }, {
           color: isBroken ? `${color}60` : color,
           lineWidth: isBroken ? 1 : 2,
-          lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
         });
       }
     };
 
-    // Helper to draw a cage using pre-computed points
     const drawCageFromPoints = (
       upperPoints: Array<{ date: string; value: number }> | undefined,
       lowerPoints: Array<{ date: string; value: number }> | undefined,
       color: string,
       isBroken: boolean,
-      breakDirection?: 'up' | 'down',
-      breakDate?: string | null,
-      breakPrice?: number | null,
-      cageLabel?: string
+      cageLabel: string
     ) => {
-      if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) return;
+      if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) {
+        console.warn(`[LightweightChart] ${cageLabel} cage missing points`);
+        return;
+      }
+      
+      // Validate dates
+      const allDates = [...upperPoints, ...lowerPoints].map(p => p.date);
+      if (!allDates.every(d => isValidDateStr(d))) {
+        console.warn(`[LightweightChart] ${cageLabel} cage has invalid dates`);
+        return;
+      }
       
       try {
-        // Draw lower line
         const lowerSeries = createLineSeries(color, isBroken);
         lowerSeries.setData([
-          { time: lowerPoints[0].date as Time, value: lowerPoints[0].value },
-          { time: lowerPoints[1].date as Time, value: lowerPoints[1].value },
+          { time: toBusinessDay(lowerPoints[0].date) as Time, value: lowerPoints[0].value },
+          { time: toBusinessDay(lowerPoints[1].date) as Time, value: lowerPoints[1].value },
         ]);
         cageSeriesRefs.current.push(lowerSeries);
         
-        // Draw upper line
         const upperSeries = createLineSeries(color, isBroken);
         upperSeries.setData([
-          { time: upperPoints[0].date as Time, value: upperPoints[0].value },
-          { time: upperPoints[1].date as Time, value: upperPoints[1].value },
+          { time: toBusinessDay(upperPoints[0].date) as Time, value: upperPoints[0].value },
+          { time: toBusinessDay(upperPoints[1].date) as Time, value: upperPoints[1].value },
         ]);
         cageSeriesRefs.current.push(upperSeries);
         
-        // Draw break marker if broken and we have the date
-        if (isBroken && breakDate && candleSeriesRef.current) {
-          const breakCandle = candles.find(c => c.date === breakDate);
-          if (breakCandle) {
-            const markerPrice = breakPrice ?? breakCandle.close;
-            const position = breakDirection === 'up' ? 'aboveBar' : 'belowBar';
-            const shape = breakDirection === 'up' ? 'arrowUp' : 'arrowDown';
-            const markerColor = breakDirection === 'up' ? '#22c55e' : '#ef4444';
-            
-            // Add marker to candlestick series if supported
-            try {
-              const markers = [{
-                time: breakDate as Time,
-                position: position as 'aboveBar' | 'belowBar',
-                color: markerColor,
-                shape: shape as 'arrowUp' | 'arrowDown',
-                text: `${cageLabel || 'Cage'} break`,
-                size: 1,
-              }];
-              
-              // Get existing markers and append
-              const existingMarkers = (candleSeriesRef.current as any).markers?.() || [];
-              (candleSeriesRef.current as any).setMarkers?.([...existingMarkers, ...markers]);
-            } catch (markerError) {
-              // Fallback: draw a vertical line at break point
-              let breakMarker: any;
-              if (typeof (chart as any).addLineSeries === 'function') {
-                breakMarker = (chart as any).addLineSeries({
-                  color: markerColor,
-                  lineWidth: 2,
-                  lineStyle: LineStyle.Solid,
-                  crosshairMarkerVisible: false,
-                  lastValueVisible: false,
-                  priceLineVisible: false,
-                });
-              } else {
-                breakMarker = (chart as any).addSeries({ type: 'Line' }, {
-                  color: markerColor,
-                  lineWidth: 2,
-                });
-              }
-              breakMarker.setData([
-                { time: breakCandle.date as Time, value: breakCandle.low * 0.995 },
-                { time: breakCandle.date as Time, value: breakCandle.high * 1.005 },
-              ]);
-              cageSeriesRefs.current.push(breakMarker);
-            }
-          }
-        }
+        console.log(`[LightweightChart] Drew ${cageLabel} cage (broken: ${isBroken})`);
       } catch (e) {
-        console.warn('Failed to draw cage lines:', e);
+        console.warn(`[LightweightChart] Failed to draw ${cageLabel} cage:`, e);
       }
     };
 
-    // Draw cage_2_4 using pre-computed points
-    if (cageFeatures.cage_2_4?.exists && cageFeatures.cage_2_4?.upper_points && cageFeatures.cage_2_4?.lower_points) {
+    // Draw cage_2_4
+    if (cageFeatures.cage_2_4?.exists) {
       drawCageFromPoints(
         cageFeatures.cage_2_4.upper_points,
         cageFeatures.cage_2_4.lower_points,
-        '#f59e0b', // amber
+        '#f59e0b',
         cageFeatures.cage_2_4.broken || false,
-        cageFeatures.cage_2_4.break_direction,
-        cageFeatures.cage_2_4.break_date,
-        undefined, // break_price not on cage_2_4 directly, would need to get from break_info
         '2-4'
       );
     }
 
     // Draw cage_ACB
-    if (cageFeatures.cage_ACB?.exists && cageFeatures.cage_ACB?.upper_points && cageFeatures.cage_ACB?.lower_points) {
+    if (cageFeatures.cage_ACB?.exists) {
       const acbBroken = cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false;
-      const acbDirection = cageFeatures.cage_ACB.broken_up ? 'up' : cageFeatures.cage_ACB.broken_down ? 'down' : undefined;
       drawCageFromPoints(
         cageFeatures.cage_ACB.upper_points,
         cageFeatures.cage_ACB.lower_points,
-        '#06b6d4', // cyan
+        '#06b6d4',
         acbBroken,
-        acbDirection,
-        cageFeatures.cage_ACB.break_date,
-        undefined,
         'ACB'
       );
     }
 
     // Draw wedge_cage
-    if (cageFeatures.wedge_cage?.exists && cageFeatures.wedge_cage?.upper_points && cageFeatures.wedge_cage?.lower_points) {
+    if (cageFeatures.wedge_cage?.exists) {
       drawCageFromPoints(
         cageFeatures.wedge_cage.upper_points,
         cageFeatures.wedge_cage.lower_points,
-        '#a855f7', // purple
+        '#a855f7',
         cageFeatures.wedge_cage.broken || false,
-        undefined, // wedge doesn't have break_direction in same format
-        cageFeatures.wedge_cage.break_date,
-        undefined,
         'Wedge'
       );
     }
-  }, [analysis?.cage_features, candles, isReady, toggles.showCages]);
+  }, [analysis?.cage_features, isReady, toggles.showCages]);
 
-  // Add price lines for key levels (respects showLevels toggle)
+  // Add price lines for key levels
   useEffect(() => {
     if (!candleSeriesRef.current || !isReady) return;
 
     const series = candleSeriesRef.current;
 
-    // Clear previous level lines (recreate series to properly clear)
     levelLinesRef.current.forEach(line => {
       try {
         series.removePriceLine(line);
@@ -601,41 +623,56 @@ export function LightweightChart({
     });
     levelLinesRef.current = [];
 
-    // Exit if levels toggle is off or no key levels
-    if (!toggles.showLevels || !analysis?.key_levels) return;
+    if (!toggles.showLevels || !analysis?.key_levels) {
+      console.log('[LightweightChart] Levels toggle off or no key_levels');
+      return;
+    }
+
+    const keyLevels = analysis.key_levels;
     
-    analysis.key_levels.support?.forEach(level => {
-      try {
-        const priceLine = series.createPriceLine({
-          price: level,
-          color: '#22c55e',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: 'S',
-        });
-        levelLinesRef.current.push(priceLine);
-      } catch (e) {}
-    });
+    // Support levels
+    if (Array.isArray(keyLevels.support)) {
+      keyLevels.support.forEach((level, idx) => {
+        if (typeof level === 'number' && !isNaN(level)) {
+          try {
+            const priceLine = series.createPriceLine({
+              price: level,
+              color: '#22c55e',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `S${idx + 1}`,
+            });
+            levelLinesRef.current.push(priceLine);
+          } catch (e) {}
+        }
+      });
+    }
 
-    analysis.key_levels.resistance?.forEach(level => {
-      try {
-        const priceLine = series.createPriceLine({
-          price: level,
-          color: '#ef4444',
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: 'R',
-        });
-        levelLinesRef.current.push(priceLine);
-      } catch (e) {}
-    });
+    // Resistance levels
+    if (Array.isArray(keyLevels.resistance)) {
+      keyLevels.resistance.forEach((level, idx) => {
+        if (typeof level === 'number' && !isNaN(level)) {
+          try {
+            const priceLine = series.createPriceLine({
+              price: level,
+              color: '#ef4444',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: `R${idx + 1}`,
+            });
+            levelLinesRef.current.push(priceLine);
+          } catch (e) {}
+        }
+      });
+    }
 
-    if (analysis.key_levels.invalidation) {
+    // Invalidation level (prominent)
+    if (typeof keyLevels.invalidation === 'number' && !isNaN(keyLevels.invalidation)) {
       try {
         const priceLine = series.createPriceLine({
-          price: analysis.key_levels.invalidation,
+          price: keyLevels.invalidation,
           color: '#f59e0b',
           lineWidth: 2,
           lineStyle: LineStyle.LargeDashed,
@@ -643,12 +680,29 @@ export function LightweightChart({
           title: 'INV',
         });
         levelLinesRef.current.push(priceLine);
-      } catch (e) {}
+        console.log(`[LightweightChart] Drew invalidation line at ${keyLevels.invalidation}`);
+      } catch (e) {
+        console.warn('[LightweightChart] Failed to draw invalidation line:', e);
+      }
+    } else {
+      console.warn('[LightweightChart] No valid invalidation level:', keyLevels.invalidation);
     }
   }, [analysis?.key_levels, isReady, toggles.showLevels]);
 
   return (
     <div className="relative w-full">
+      {/* Warnings Banner */}
+      {warnings.length > 0 && (
+        <div className="absolute top-12 left-2 right-2 z-30 flex flex-col gap-1">
+          {warnings.map((w, idx) => (
+            <div key={idx} className="flex items-center gap-2 bg-amber-500/20 text-amber-300 text-xs px-2 py-1 rounded">
+              <AlertTriangle className="h-3 w-3" />
+              {w.message}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Overlay Toggle Controls */}
       <div className="absolute top-2 left-2 z-20 flex items-center gap-4 bg-background/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-border/50">
         <span className="text-sm font-medium text-foreground">{symbol}</span>
@@ -669,7 +723,6 @@ export function LightweightChart({
         
         <div className="h-4 w-px bg-border/50" />
         
-        {/* Toggles */}
         <div className="flex items-center gap-1">
           <Switch
             id="toggle-waves"
@@ -710,11 +763,11 @@ export function LightweightChart({
         </div>
       </div>
 
-      {/* Wave Legend (shows when waves are ON) */}
+      {/* Wave Legend */}
       {toggles.showWaves && normalizedActiveWavePoints.length > 0 && (
         <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs bg-background/80 backdrop-blur-sm rounded-lg px-2 py-1 border border-border/50">
           <span className="text-muted-foreground">Waves:</span>
-          {normalizedActiveWavePoints.map((wp, idx) => {
+          {normalizedActiveWavePoints.slice(-8).map((wp, idx) => {
             const color = WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280';
             return (
               <span 
@@ -724,7 +777,7 @@ export function LightweightChart({
                   backgroundColor: `${color}20`,
                   color: color,
                 }}
-                title={wp.wave}
+                title={`${wp.wave} @ ${wp.price.toFixed(2)}`}
               >
                 {wp.norm.display}
               </span>
@@ -736,7 +789,7 @@ export function LightweightChart({
       <div 
         ref={chartContainerRef} 
         className="w-full"
-        style={{ height }}
+        style={{ height, minHeight: 420 }}
       />
     </div>
   );

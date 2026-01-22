@@ -276,19 +276,32 @@ export default function Screener() {
               </div>
             )}
             
-            {/* Chart Area - Uses candles from backend response */}
-            <div className="flex-1 p-4">
-              {selectedSymbol && candles.length > 0 ? (
-                <LightweightChart 
-                  candles={candles}
-                  symbol={selectedSymbol}
-                  analysis={analysis}
-                  selectedAlternateIndex={selectedAlternateIndex}
-                  height={600}
-                />
+            {/* Chart Area - LightweightChart is the PRIMARY analysis chart */}
+            <div className="flex-1 p-2">
+              {selectedSymbol ? (
+                candles.length > 0 ? (
+                  <LightweightChart 
+                    candles={candles}
+                    symbol={selectedSymbol}
+                    analysis={analysis}
+                    selectedAlternateIndex={selectedAlternateIndex}
+                    height={Math.max(420, window.innerHeight - 200)}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-[420px] text-muted-foreground border border-dashed border-border/50 rounded-lg">
+                    {isLoading ? (
+                      <span>Loading chart data...</span>
+                    ) : (
+                      <>
+                        <AlertCircle className="h-8 w-8 mb-2 text-amber-400" />
+                        <span>No candles returned from backend</span>
+                      </>
+                    )}
+                  </div>
+                )
               ) : (
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  {isLoading ? 'Loading...' : 'Select a symbol to view chart'}
+                <div className="flex items-center justify-center h-[420px] text-muted-foreground border border-dashed border-border/50 rounded-lg">
+                  Select a symbol to view analysis chart
                 </div>
               )}
             </div>
