@@ -176,21 +176,27 @@ export function AnalysisPanel({
               <div>
                 <span className="text-green-400 text-xs">Support</span>
                 <div className="flex flex-wrap gap-2 mt-1">
-                  {analysis.key_levels.support.map((level, i) => (
-                    <Badge key={i} variant="outline" className="border-green-500/30 text-green-400">
-                      ${level.toFixed(2)}
-                    </Badge>
-                  ))}
+                  {analysis.key_levels.support.map((level, i) => {
+                    const val = typeof level === 'number' ? level : level.level;
+                    return (
+                      <Badge key={i} variant="outline" className="border-green-500/30 text-green-400">
+                        ${val.toFixed(2)}
+                      </Badge>
+                    );
+                  })}
                 </div>
               </div>
               <div>
                 <span className="text-red-400 text-xs">Resistance</span>
                 <div className="flex flex-wrap gap-2 mt-1">
-                  {analysis.key_levels.resistance.map((level, i) => (
-                    <Badge key={i} variant="outline" className="border-red-500/30 text-red-400">
-                      ${level.toFixed(2)}
-                    </Badge>
-                  ))}
+                  {analysis.key_levels.resistance.map((level, i) => {
+                    const val = typeof level === 'number' ? level : level.level;
+                    return (
+                      <Badge key={i} variant="outline" className="border-red-500/30 text-red-400">
+                        ${val.toFixed(2)}
+                      </Badge>
+                    );
+                  })}
                 </div>
               </div>
               <div>
@@ -209,7 +215,9 @@ export function AnalysisPanel({
                   Invalidation
                 </span>
                 <span className="font-medium text-yellow-400">
-                  ${analysis.key_levels.invalidation.toFixed(2)}
+                  ${(typeof analysis.key_levels.invalidation === 'number' 
+                    ? analysis.key_levels.invalidation 
+                    : analysis.key_levels.invalidation.level).toFixed(2)}
                 </span>
               </div>
             </CardContent>

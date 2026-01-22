@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   ColorType,
@@ -17,32 +17,35 @@ import {
   MultiLayerAnalysis, 
   WaveLayer,
   WaveDegree,
+  CageFeatures,
+  KeyLevels,
+  normalizeWaveLabel,
   formatWaveLabelByDegree,
+  normalizeKeyLevelEntry,
+  getInvalidationLevel,
   DEGREE_ABBREV_MAP,
+  NormalizedWaveLabel,
 } from '@/types/analysis';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { TrendingUp, Grid3X3, Target, AlertTriangle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { TrendingUp, Grid3X3, Target, AlertTriangle, Info } from 'lucide-react';
 
 // ============================================================================
 // SERIES HELPERS - v4/v5 compatibility
 // ============================================================================
 
 function safeAddCandles(chart: IChartApi, options: Record<string, unknown>): ISeriesApi<'Candlestick'> {
-  // v4 API: addCandlestickSeries()
   if (typeof (chart as any).addCandlestickSeries === 'function') {
     return (chart as any).addCandlestickSeries(options);
   }
-  // v5 API: addSeries(CandlestickSeries, options)
   return (chart as any).addSeries(CandlestickSeries, options);
 }
 
 function safeAddLine(chart: IChartApi, options: Record<string, unknown>): ISeriesApi<'Line'> {
-  // v4 API: addLineSeries()
   if (typeof (chart as any).addLineSeries === 'function') {
     return (chart as any).addLineSeries(options);
   }
-  // v5 API: addSeries(LineSeries, options)
   return (chart as any).addSeries(LineSeries, options);
 }
 
@@ -67,13 +70,8 @@ function isValidDateStr(dateStr: string): boolean {
 // TYPES
 // ============================================================================
 
-interface NormalizedWaveLabel {
-  raw: string;
-  degree: string | null;
-  waveNum: number | null;
-  waveABC: 'A' | 'B' | 'C' | null;
-  colorKey: string;
-  display: string;
+interface NormalizedWavePoint extends WavePoint {
+  norm: NormalizedWaveLabel;
 }
 
 export interface ChartOverlayToggles {
@@ -90,7 +88,6 @@ interface ChartWarning {
 interface LightweightChartProps {
   candles: Candle[];
   symbol: string;
-  // Support both legacy single analysis and new multi-layer
   analysis?: ElliottAnalysisResult | null;
   multiLayer?: MultiLayerAnalysis | null;
   activeLayerIds?: Set<string>;
@@ -101,13 +98,6 @@ interface LightweightChartProps {
 }
 
 type SeriesWithChartId<T> = { series: T; chartId: number };
-
-function isCurrentSeries<T>(
-  meta: SeriesWithChartId<T> | null,
-  currentChartId: number
-): meta is SeriesWithChartId<T> {
-  return !!meta && meta.chartId === currentChartId;
-}
 
 // ============================================================================
 // CONSTANTS
@@ -121,6 +111,7 @@ const WAVE_COLORS = {
 };
 
 const WAVE_LABEL_COLORS: Record<string, string> = {
+  '0': '#9ca3af',
   '1': '#3b82f6',
   '2': '#22c55e',
   '3': '#ef4444',
@@ -134,7 +125,6 @@ const WAVE_LABEL_COLORS: Record<string, string> = {
   'Y': '#0ea5e9',
 };
 
-// Degree-specific line colors for multi-layer
 const DEGREE_LINE_COLORS: Record<WaveDegree, string> = {
   'Supercycle': '#8b5cf6',
   'Cycle': '#3b82f6',
@@ -142,20 +132,6 @@ const DEGREE_LINE_COLORS: Record<WaveDegree, string> = {
   'Intermediate': '#f59e0b',
   'Minor': '#06b6d4',
   'Minute': '#ec4899',
-};
-
-const DEGREE_ABBREV: Record<string, string> = {
-  'supercycle': 'SC',
-  'cycle': 'C',
-  'primary': 'P',
-  'intermediate': 'I',
-  'minor': 'm',
-  'minute': 'μ',
-};
-
-const ROMAN_TO_ARABIC: Record<string, number> = {
-  'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
-  'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
 };
 
 const DEGREE_PRIORITY: Record<string, number> = {
@@ -171,79 +147,13 @@ const DEGREE_PRIORITY: Record<string, number> = {
 // HELPER FUNCTIONS
 // ============================================================================
 
-function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
-  const result: NormalizedWaveLabel = {
-    raw,
-    degree: null,
-    waveNum: null,
-    waveABC: null,
-    colorKey: 'X',
-    display: raw,
-  };
-
-  const upper = raw.toUpperCase();
-  const lower = raw.toLowerCase();
-
-  const degreeKeywords = ['supercycle', 'cycle', 'primary', 'intermediate', 'minor', 'minute'];
-  for (const deg of degreeKeywords) {
-    if (lower.includes(deg)) {
-      result.degree = deg.charAt(0).toUpperCase() + deg.slice(1);
-      break;
-    }
-  }
-
-  const arabicMatch = raw.match(/\b([1-5])\b/);
-  if (arabicMatch) {
-    result.waveNum = parseInt(arabicMatch[1], 10);
-    result.colorKey = arabicMatch[1];
-  }
-
-  if (!result.waveNum) {
-    const romanMatch = raw.match(/\b(IV|III|II|I|V)\b/i);
-    if (romanMatch) {
-      const romanUpper = romanMatch[1].toUpperCase();
-      if (ROMAN_TO_ARABIC[romanUpper]) {
-        result.waveNum = ROMAN_TO_ARABIC[romanUpper];
-        result.colorKey = String(result.waveNum);
-      }
-    }
-  }
-
-  const abcMatch = upper.match(/\b([ABC])\b|\(([ABC])\)/);
-  if (abcMatch) {
-    const letter = (abcMatch[1] || abcMatch[2]) as 'A' | 'B' | 'C';
-    result.waveABC = letter;
-    if (!result.waveNum) {
-      result.colorKey = letter;
-    }
-  }
-
-  if (!result.waveNum && !result.waveABC) {
-    const wxyMatch = upper.match(/\b([WXY])\b/);
-    if (wxyMatch) {
-      result.colorKey = wxyMatch[1];
-    }
-  }
-
-  const degAbbrev = result.degree ? DEGREE_ABBREV[result.degree.toLowerCase()] || '' : '';
-  if (result.waveNum) {
-    result.display = degAbbrev ? `${degAbbrev}${result.waveNum}` : String(result.waveNum);
-  } else if (result.waveABC) {
-    result.display = degAbbrev ? `${degAbbrev}-${result.waveABC}` : result.waveABC;
-  } else if (result.colorKey !== 'X') {
-    result.display = result.colorKey;
-  }
-
-  return result;
-}
-
-function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | null {
-  const recentPoints = points.slice(-7);
+function findDominantDegree(points: NormalizedWavePoint[]): WaveDegree | null {
+  const recentPoints = points.slice(-10);
   const degreeCounts: Record<string, number> = {};
   
   for (const p of recentPoints) {
-    if (p.norm.degree) {
-      degreeCounts[p.norm.degree] = (degreeCounts[p.norm.degree] || 0) + 1;
+    if (p.norm.degreeKey) {
+      degreeCounts[p.norm.degreeKey] = (degreeCounts[p.norm.degreeKey] || 0) + 1;
     }
   }
   
@@ -254,7 +164,7 @@ function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | n
     .filter(([_, count]) => count === maxCount)
     .map(([deg]) => deg);
   
-  if (topDegrees.length === 1) return topDegrees[0];
+  if (topDegrees.length === 1) return topDegrees[0] as WaveDegree;
   
   let bestDeg = topDegrees[0];
   let bestPriority = DEGREE_PRIORITY[bestDeg] || 0;
@@ -267,7 +177,7 @@ function findDominantDegree(points: { norm: NormalizedWaveLabel }[]): string | n
     }
   }
   
-  return bestDeg;
+  return bestDeg as WaveDegree;
 }
 
 // ============================================================================
@@ -290,18 +200,14 @@ export function LightweightChart({
   const chartRemovedRef = useRef(false);
   const chartInstanceIdRef = useRef(0);
   const currentChartIdRef = useRef(0);
-  const candleSeriesChartIdRef = useRef(0);
-
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  // Multi-layer series registry
-  const waveSeriesByLayerRef = useRef<Map<string, SeriesWithChartId<ISeriesApi<'Line'>>>>(new Map());
-  const cageSeriesByLayerRef = useRef<Map<string, { upper: SeriesWithChartId<ISeriesApi<'Line'>>; lower: SeriesWithChartId<ISeriesApi<'Line'>> }>>(new Map());
-  const levelLinesByLayerRef = useRef<Map<string, any[]>>(new Map());
   
-  // Legacy refs for backward compatibility
-  const waveLineSeriesRef = useRef<SeriesWithChartId<ISeriesApi<'Line'>> | null>(null);
-  const cageSeriesRefs = useRef<Array<SeriesWithChartId<ISeriesApi<'Line'>>>>([]);
-  const cageSeriesByKeyRef = useRef<Record<string, SeriesWithChartId<ISeriesApi<'Line'>>>>({});
+  // Operation token for overlay management
+  const overlayOpRef = useRef(0);
+
+  // Series refs (all managed in a single overlay effect)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const waveSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const cageSeriesMapRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
   const levelLinesRef = useRef<any[]>([]);
   
   const [isReady, setIsReady] = useState(false);
@@ -315,14 +221,14 @@ export function LightweightChart({
   
   const toggles = externalToggles || internalToggles;
   
-  const handleToggle = (key: keyof ChartOverlayToggles) => {
+  const handleToggle = useCallback((key: keyof ChartOverlayToggles) => {
     const newToggles = { ...toggles, [key]: !toggles[key] };
     if (onToggleChange) {
       onToggleChange(newToggles);
     } else {
       setInternalToggles(newToggles);
     }
-  };
+  }, [toggles, onToggleChange]);
 
   // Get candle date range for validation
   const candleDateRange = useMemo(() => {
@@ -338,7 +244,6 @@ export function LightweightChart({
     if (multiLayer && activeLayerIds && activeLayerIds.size > 0) {
       return multiLayer.layers.filter(l => activeLayerIds.has(l.layer_id));
     }
-    // Fallback: convert single analysis to a pseudo-layer
     if (analysis) {
       return [{
         layer_id: 'legacy',
@@ -356,22 +261,20 @@ export function LightweightChart({
     return [];
   }, [multiLayer, activeLayerIds, analysis]);
 
-  // Get wave points from all active layers (for legacy compatibility)
+  // Get combined wave points (for legacy compatibility)
   const activeWavePoints: WavePoint[] = useMemo(() => {
     if (activeLayers.length === 0) return [];
     
-    // For alternate selection with legacy analysis
     if (analysis && selectedAlternateIndex !== null && 
         analysis.alternate_counts[selectedAlternateIndex]?.waves?.length > 0) {
       return analysis.alternate_counts[selectedAlternateIndex].waves!;
     }
     
-    // Combine waves from all active layers
     return activeLayers.flatMap(l => l.waves);
   }, [activeLayers, analysis, selectedAlternateIndex]);
 
-  // Normalize and validate wave labels
-  const normalizedActiveWavePoints = useMemo(() => {
+  // Normalize wave points with enhanced label parsing
+  const normalizedActiveWavePoints: NormalizedWavePoint[] = useMemo(() => {
     return activeWavePoints
       .filter(wp => isValidDateStr(wp.date))
       .map(wp => ({
@@ -384,18 +287,21 @@ export function LightweightChart({
     return findDominantDegree(normalizedActiveWavePoints);
   }, [normalizedActiveWavePoints]);
 
+  // Get base layer for cage/levels (first active layer)
+  const baseLayer = useMemo(() => {
+    return activeLayers[0] || null;
+  }, [activeLayers]);
+
   // Validate data and set warnings
   useEffect(() => {
     const newWarnings: ChartWarning[] = [];
     
     if (candles.length === 0) {
       newWarnings.push({ type: 'no_candles', message: 'No candles returned from backend' });
-      console.warn('[LightweightChart] No candles data');
     }
     
     if (analysis && (!analysis.primary_count?.waves || analysis.primary_count.waves.length === 0)) {
       newWarnings.push({ type: 'no_waves', message: 'No wave points in analysis' });
-      console.warn('[LightweightChart] No wave points in primary_count.waves');
     }
     
     if (activeWavePoints.length > 0 && candles.length > 0) {
@@ -407,18 +313,16 @@ export function LightweightChart({
           type: 'waves_outside_range', 
           message: `${outsideRange.length} wave points outside candle range` 
         });
-        console.warn('[LightweightChart] Wave points outside candle range:', outsideRange);
       }
     }
     
     setWarnings(newWarnings);
   }, [candles, analysis, activeWavePoints, candleDateRange]);
 
-  // Initialize chart
+  // Initialize chart ONCE on mount
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Create chart ONCE per mount
     chartRemovedRef.current = false;
     chartInstanceIdRef.current += 1;
     const myId = chartInstanceIdRef.current;
@@ -461,10 +365,8 @@ export function LightweightChart({
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
-    candleSeriesChartIdRef.current = myId;
     setIsReady(true);
 
-    // Keep width in sync with container (ResizeObserver avoids window resize races)
     let ro: ResizeObserver | null = null;
     try {
       ro = new ResizeObserver(() => {
@@ -472,39 +374,25 @@ export function LightweightChart({
         const c = chartRef.current;
         if (!c || currentChartIdRef.current !== myId) return;
         const w = container.clientWidth;
-        if (w > 0) {
-          c.applyOptions({ width: w });
-        }
+        if (w > 0) c.applyOptions({ width: w });
       });
       ro.observe(container);
-    } catch {
-      // Ignore (old browsers) - chart will still render with initial width.
-    }
+    } catch {}
 
     return () => {
-      chartRemovedRef.current = true; // Mark as removed BEFORE removing
+      chartRemovedRef.current = true;
       currentChartIdRef.current = 0;
-
-      try {
-        ro?.disconnect();
-      } catch {}
-
-      // Clear refs (avoid later effects touching stale series)
+      try { ro?.disconnect(); } catch {}
       chartRef.current = null;
       candleSeriesRef.current = null;
-      waveLineSeriesRef.current = null;
-      cageSeriesRefs.current = [];
-      cageSeriesByKeyRef.current = {};
+      waveSeriesRef.current = null;
+      cageSeriesMapRef.current.clear();
       levelLinesRef.current = [];
-      candleSeriesChartIdRef.current = 0;
-
-      try {
-        chart.remove();
-      } catch {}
+      try { chart.remove(); } catch {}
     };
   }, []);
 
-  // Apply height updates WITHOUT recreating the chart
+  // Apply height updates
   useEffect(() => {
     if (chartRemovedRef.current) return;
     const chart = chartRef.current;
@@ -512,11 +400,9 @@ export function LightweightChart({
     chart.applyOptions({ height });
   }, [height]);
 
-  // Update candle data with BusinessDay format
+  // Update candle data
   useEffect(() => {
-    if (chartRemovedRef.current) return;
-    if (!candleSeriesRef.current || !isReady || candles.length === 0) return;
-    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
+    if (chartRemovedRef.current || !candleSeriesRef.current || !isReady || candles.length === 0) return;
 
     const chartData = candles
       .filter(c => isValidDateStr(c.date))
@@ -528,12 +414,8 @@ export function LightweightChart({
         close: c.close,
       }));
 
-    if (chartData.length === 0) {
-      console.warn('[LightweightChart] No valid candle dates after filtering');
-      return;
-    }
+    if (chartData.length === 0) return;
 
-    console.log(`[LightweightChart] Setting ${chartData.length} candles`);
     candleSeriesRef.current.setData(chartData);
     
     if (chartRef.current) {
@@ -541,56 +423,48 @@ export function LightweightChart({
     }
   }, [candles, isReady]);
 
-  // Add wave lines with BusinessDay format
+  // ============================================================================
+  // UNIFIED OVERLAY MANAGER - Single effect for all overlays
+  // ============================================================================
   useEffect(() => {
-    if (chartRemovedRef.current) return;
-    if (!candleSeriesRef.current || !isReady) return;
-    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
-
-    const currentChartId = currentChartIdRef.current;
-
-    // If we have a stale series (from some previous chart instance), drop it without touching chart.removeSeries
-    if (waveLineSeriesRef.current && waveLineSeriesRef.current.chartId !== currentChartId) {
-      waveLineSeriesRef.current = null;
-    }
-
-    // Toggle off => keep series but clear data (avoid remove/add churn)
-    if (!toggles.showWaves || normalizedActiveWavePoints.length === 0) {
-      if (isCurrentSeries(waveLineSeriesRef.current, currentChartId)) {
-        try {
-          waveLineSeriesRef.current.series.setData([]);
-        } catch {}
-      }
-      try {
-        (candleSeriesRef.current as any).setMarkers?.([]);
-      } catch {}
-      return;
-    }
-
-    // Filter wave points to those within candle range
-    const validWavePoints = normalizedActiveWavePoints.filter(wp => 
-      wp.date >= candleDateRange.min && wp.date <= candleDateRange.max
-    );
-
-    if (validWavePoints.length < 2) {
-      console.warn('[LightweightChart] Less than 2 valid wave points within candle range');
-      if (isCurrentSeries(waveLineSeriesRef.current, currentChartId)) {
-        try {
-          waveLineSeriesRef.current.series.setData([]);
-        } catch {}
-      }
-      return;
-    }
-
+    if (chartRemovedRef.current || !isReady) return;
+    
     const chart = chartRef.current;
-    if (!chart) return;
+    const candleSeries = candleSeriesRef.current;
+    if (!chart || !candleSeries) return;
 
-    try {
-      const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
+    // Operation token to prevent stale updates
+    overlayOpRef.current += 1;
+    const opId = overlayOpRef.current;
 
-      let lineMeta = waveLineSeriesRef.current;
-      if (!isCurrentSeries(lineMeta, currentChartId)) {
-        const lineSeries = safeAddLine(chart, {
+    const isStale = () => chartRemovedRef.current || overlayOpRef.current !== opId;
+
+    // ========== WAVES ==========
+    const drawWaves = () => {
+      if (isStale()) return;
+      
+      // Clear existing markers first
+      try { (candleSeries as any).setMarkers?.([]); } catch {}
+      
+      // Clear wave series data
+      if (waveSeriesRef.current) {
+        try { waveSeriesRef.current.setData([]); } catch {}
+      }
+
+      if (!toggles.showWaves || normalizedActiveWavePoints.length < 2) return;
+
+      // Filter to valid points within candle range
+      const validPoints = normalizedActiveWavePoints.filter(wp => 
+        wp.date >= candleDateRange.min && wp.date <= candleDateRange.max
+      );
+
+      if (validPoints.length < 2) return;
+      if (isStale()) return;
+
+      // Create or reuse wave series
+      if (!waveSeriesRef.current) {
+        const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
+        waveSeriesRef.current = safeAddLine(chart, {
           color: lineColor,
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
@@ -598,280 +472,255 @@ export function LightweightChart({
           lastValueVisible: false,
           priceLineVisible: false,
         });
-        lineMeta = { series: lineSeries, chartId: currentChartId };
-        waveLineSeriesRef.current = lineMeta;
-      } else {
-        // Update color when switching between primary/alternate
-        try {
-          (lineMeta.series as any).applyOptions?.({ color: lineColor });
-        } catch {}
       }
 
-      const lineData = validWavePoints.map(wp => ({
+      if (isStale()) return;
+
+      // Set line data
+      const lineData = validPoints.map(wp => ({
         time: toBusinessDay(wp.date) as Time,
         value: wp.price,
       }));
+      waveSeriesRef.current.setData(lineData);
 
-      console.log(`[LightweightChart] Drawing wave line with ${lineData.length} points`);
-      lineMeta.series.setData(lineData);
-
-      // Add markers for wave labels
+      // Set markers with Elliott Wave nomenclature
       try {
-        const markers = validWavePoints.map(wp => {
-          const isLow = wp.price <= Math.min(...validWavePoints.map(p => p.price)) * 1.02;
+        const minPrice = Math.min(...validPoints.map(p => p.price));
+        const markers = validPoints.map(wp => {
+          const isLow = wp.price <= minPrice * 1.02;
+          const effectiveDegree = wp.norm.degreeKey || dominantDegree || 'Primary';
+          
           return {
             time: toBusinessDay(wp.date) as Time,
             position: isLow ? 'belowBar' : 'aboveBar',
             color: WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280',
             shape: 'circle',
-            text: wp.norm.display,
+            text: wp.norm.displayEw, // Use Elliott Wave standard display
             size: 1,
           };
         });
-        (candleSeriesRef.current as any).setMarkers?.(markers);
-      } catch (markerError) {
-        console.warn('[LightweightChart] Could not set markers:', markerError);
-      }
-
-    } catch (e) {
-      console.warn('[LightweightChart] Failed to create wave lines:', e);
-    }
-  }, [normalizedActiveWavePoints, isReady, selectedAlternateIndex, toggles.showWaves, candleDateRange]);
-
-  // Draw cage lines with BusinessDay format
-  useEffect(() => {
-    if (chartRemovedRef.current) return;
-    if (!isReady) return;
-
-    const chart = chartRef.current;
-    if (!chart) return;
-
-    const currentChartId = currentChartIdRef.current;
-
-    // Drop any stale cage series refs (from previous chart instances)
-    if (cageSeriesRefs.current.some(m => m.chartId !== currentChartId)) {
-      cageSeriesRefs.current = [];
-      cageSeriesByKeyRef.current = {};
-    }
-
-    if (!toggles.showCages || !analysis?.cage_features) {
-      console.log('[LightweightChart] Cages toggle off or no cage_features');
-
-      // Toggle off => clear all cage data but keep series instances
-      cageSeriesRefs.current.forEach(meta => {
-        if (meta.chartId !== currentChartId) return;
-        try {
-          meta.series.setData([]);
-        } catch {}
-      });
-      return;
-    }
-
-    const cageFeatures = analysis.cage_features;
-
-    const getOrCreateCageSeries = (key: string, color: string, isBroken: boolean) => {
-      const existing = cageSeriesByKeyRef.current[key];
-      if (existing && existing.chartId === currentChartId) {
-        // Update style as broken/unbroken changes
-        try {
-          (existing.series as any).applyOptions?.({
-            color: isBroken ? `${color}60` : color,
-            lineWidth: isBroken ? 1 : 2,
-            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
-          });
-        } catch {}
-        return existing;
-      }
-
-      const s = safeAddLine(chart, {
-        color: isBroken ? `${color}60` : color,
-        lineWidth: isBroken ? 1 : 2,
-        lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
-        crosshairMarkerVisible: false,
-        lastValueVisible: false,
-        priceLineVisible: false,
-      });
-
-      const meta: SeriesWithChartId<ISeriesApi<'Line'>> = { series: s as ISeriesApi<'Line'>, chartId: currentChartId };
-      cageSeriesByKeyRef.current[key] = meta;
-      cageSeriesRefs.current.push(meta);
-      return meta;
+        (candleSeries as any).setMarkers?.(markers);
+      } catch {}
     };
 
-    const drawCageFromPoints = (
-      upperPoints: Array<{ date: string; value: number }> | undefined,
-      lowerPoints: Array<{ date: string; value: number }> | undefined,
-      color: string,
-      isBroken: boolean,
-      cageLabel: string
-    ) => {
-      if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) {
-        console.warn(`[LightweightChart] ${cageLabel} cage missing points`);
-        return;
-      }
+    // ========== CAGES ==========
+    const drawCages = () => {
+      if (isStale()) return;
       
-      // Validate dates
-      const allDates = [...upperPoints, ...lowerPoints].map(p => p.date);
-      if (!allDates.every(d => isValidDateStr(d))) {
-        console.warn(`[LightweightChart] ${cageLabel} cage has invalid dates`);
-        return;
-      }
-      
-      if (chartRemovedRef.current) return;
+      // Clear existing cage series data
+      cageSeriesMapRef.current.forEach(series => {
+        try { series.setData([]); } catch {}
+      });
 
-      try {
-        const lowerMeta = getOrCreateCageSeries(`${cageLabel}-lower`, color, isBroken);
-        lowerMeta.series.setData([
+      if (!toggles.showCages || !baseLayer?.cage_features) return;
+
+      const cf = baseLayer.cage_features;
+      
+      const drawCageFromPoints = (
+        upperPoints: Array<{ date: string; value: number }> | undefined,
+        lowerPoints: Array<{ date: string; value: number }> | undefined,
+        color: string,
+        isBroken: boolean,
+        cageLabel: string,
+        breakInfo?: { break_date?: string | null; break_price?: number | null; boundary_value_at_break?: number | null; break_strength_atr?: number }
+      ) => {
+        if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) return;
+        if (!upperPoints.every(p => isValidDateStr(p.date)) || !lowerPoints.every(p => isValidDateStr(p.date))) return;
+        if (isStale()) return;
+
+        const style = isBroken ? LineStyle.Dotted : LineStyle.Dashed;
+        const opacity = isBroken ? '60' : '';
+        const width = isBroken ? 1 : 2;
+
+        // Lower line
+        const lowerKey = `${cageLabel}-lower`;
+        if (!cageSeriesMapRef.current.has(lowerKey)) {
+          cageSeriesMapRef.current.set(lowerKey, safeAddLine(chart, {
+            color: `${color}${opacity}`,
+            lineWidth: width,
+            lineStyle: style,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          }));
+        }
+        const lowerSeries = cageSeriesMapRef.current.get(lowerKey)!;
+        try {
+          (lowerSeries as any).applyOptions?.({ color: `${color}${opacity}`, lineWidth: width, lineStyle: style });
+        } catch {}
+        lowerSeries.setData([
           { time: toBusinessDay(lowerPoints[0].date) as Time, value: lowerPoints[0].value },
           { time: toBusinessDay(lowerPoints[1].date) as Time, value: lowerPoints[1].value },
         ]);
 
-        const upperMeta = getOrCreateCageSeries(`${cageLabel}-upper`, color, isBroken);
-        upperMeta.series.setData([
+        // Upper line
+        const upperKey = `${cageLabel}-upper`;
+        if (!cageSeriesMapRef.current.has(upperKey)) {
+          cageSeriesMapRef.current.set(upperKey, safeAddLine(chart, {
+            color: `${color}${opacity}`,
+            lineWidth: width,
+            lineStyle: style,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          }));
+        }
+        const upperSeries = cageSeriesMapRef.current.get(upperKey)!;
+        try {
+          (upperSeries as any).applyOptions?.({ color: `${color}${opacity}`, lineWidth: width, lineStyle: style });
+        } catch {}
+        upperSeries.setData([
           { time: toBusinessDay(upperPoints[0].date) as Time, value: upperPoints[0].value },
           { time: toBusinessDay(upperPoints[1].date) as Time, value: upperPoints[1].value },
         ]);
 
-        console.log(`[LightweightChart] Drew ${cageLabel} cage (broken: ${isBroken})`);
-      } catch (e) {
-        console.warn(`[LightweightChart] Failed to draw ${cageLabel} cage:`, e);
+        // TODO: Add break marker when break_date exists
+      };
+
+      // Draw cage_2_4
+      if (cf.cage_2_4?.exists) {
+        drawCageFromPoints(
+          cf.cage_2_4.upper_points,
+          cf.cage_2_4.lower_points,
+          '#f59e0b',
+          cf.cage_2_4.broken || false,
+          '2-4',
+          {
+            break_date: cf.cage_2_4.break_date,
+            break_price: cf.cage_2_4.break_price,
+            boundary_value_at_break: cf.cage_2_4.boundary_value_at_break,
+            break_strength_atr: cf.cage_2_4.break_strength_atr,
+          }
+        );
+      }
+
+      // Draw cage_ACB (5-B channel for corrections)
+      if (cf.cage_ACB?.exists) {
+        const acbBroken = cf.cage_ACB.broken_up || cf.cage_ACB.broken_down || false;
+        drawCageFromPoints(
+          cf.cage_ACB.upper_points,
+          cf.cage_ACB.lower_points,
+          '#06b6d4',
+          acbBroken,
+          '5-B',
+          {
+            break_date: cf.cage_ACB.break_date,
+            break_price: cf.cage_ACB.break_price,
+            boundary_value_at_break: cf.cage_ACB.boundary_value_at_break,
+            break_strength_atr: cf.cage_ACB.break_strength_atr,
+          }
+        );
+      }
+
+      // Draw wedge_cage
+      if (cf.wedge_cage?.exists) {
+        drawCageFromPoints(
+          cf.wedge_cage.upper_points,
+          cf.wedge_cage.lower_points,
+          '#a855f7',
+          cf.wedge_cage.broken || false,
+          'Wedge',
+          {
+            break_date: cf.wedge_cage.break_date,
+            break_price: cf.wedge_cage.break_price,
+            boundary_value_at_break: cf.wedge_cage.boundary_value_at_break,
+            break_strength_atr: cf.wedge_cage.break_strength_atr,
+          }
+        );
       }
     };
 
-    const expectedKeys = new Set<string>();
+    // ========== LEVELS (S/R/INV) ==========
+    const drawLevels = () => {
+      if (isStale()) return;
+      
+      // Remove existing price lines
+      levelLinesRef.current.forEach(line => {
+        try { candleSeries.removePriceLine(line); } catch {}
+      });
+      levelLinesRef.current = [];
 
-    // Draw cage_2_4
-    if (cageFeatures.cage_2_4?.exists) {
-      expectedKeys.add('2-4-lower');
-      expectedKeys.add('2-4-upper');
-      drawCageFromPoints(
-        cageFeatures.cage_2_4.upper_points,
-        cageFeatures.cage_2_4.lower_points,
-        '#f59e0b',
-        cageFeatures.cage_2_4.broken || false,
-        '2-4'
-      );
-    }
+      if (!toggles.showLevels || !baseLayer?.key_levels) return;
 
-    // Draw cage_ACB
-    if (cageFeatures.cage_ACB?.exists) {
-      const acbBroken = cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false;
-      expectedKeys.add('ACB-lower');
-      expectedKeys.add('ACB-upper');
-      drawCageFromPoints(
-        cageFeatures.cage_ACB.upper_points,
-        cageFeatures.cage_ACB.lower_points,
-        '#06b6d4',
-        acbBroken,
-        'ACB'
-      );
-    }
+      const kl = baseLayer.key_levels;
+      const degreeAbbrev = baseLayer.degree ? DEGREE_ABBREV_MAP[baseLayer.degree] : '';
+      const sourceLabel = baseLayer.source === 'structure' ? ' (struct)' : '';
 
-    // Draw wedge_cage
-    if (cageFeatures.wedge_cage?.exists) {
-      expectedKeys.add('Wedge-lower');
-      expectedKeys.add('Wedge-upper');
-      drawCageFromPoints(
-        cageFeatures.wedge_cage.upper_points,
-        cageFeatures.wedge_cage.lower_points,
-        '#a855f7',
-        cageFeatures.wedge_cage.broken || false,
-        'Wedge'
-      );
-    }
-
-    // Any previously-created cage series that is no longer relevant gets cleared (not removed)
-    Object.entries(cageSeriesByKeyRef.current).forEach(([key, meta]) => {
-      if (meta.chartId !== currentChartId) return;
-      if (!expectedKeys.has(key)) {
-        try {
-          meta.series.setData([]);
-        } catch {}
-      }
-    });
-  }, [analysis?.cage_features, isReady, toggles.showCages]);
-
-  // Add price lines for key levels
-  useEffect(() => {
-    if (chartRemovedRef.current) return;
-    if (!candleSeriesRef.current || !isReady) return;
-    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
-
-    const series = candleSeriesRef.current;
-
-    levelLinesRef.current.forEach(line => {
-      try {
-        series.removePriceLine(line);
-      } catch (e) {}
-    });
-    levelLinesRef.current = [];
-
-    if (!toggles.showLevels || !analysis?.key_levels) {
-      console.log('[LightweightChart] Levels toggle off or no key_levels');
-      return;
-    }
-
-    const keyLevels = analysis.key_levels;
-    
-    // Support levels
-    if (Array.isArray(keyLevels.support)) {
-      keyLevels.support.forEach((level, idx) => {
-        if (typeof level === 'number' && !isNaN(level)) {
+      // Supports (green)
+      if (Array.isArray(kl.support)) {
+        kl.support.forEach((entry, idx) => {
+          const normalized = normalizeKeyLevelEntry(entry);
+          if (isNaN(normalized.level)) return;
           try {
-            const priceLine = series.createPriceLine({
-              price: level,
+            const line = candleSeries.createPriceLine({
+              price: normalized.level,
               color: '#22c55e',
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               axisLabelVisible: true,
-              title: `S${idx + 1}`,
+              title: `${degreeAbbrev}S${idx + 1}${sourceLabel}`,
             });
-            levelLinesRef.current.push(priceLine);
-          } catch (e) {}
-        }
-      });
-    }
+            levelLinesRef.current.push(line);
+          } catch {}
+        });
+      }
 
-    // Resistance levels
-    if (Array.isArray(keyLevels.resistance)) {
-      keyLevels.resistance.forEach((level, idx) => {
-        if (typeof level === 'number' && !isNaN(level)) {
+      // Resistances (red)
+      if (Array.isArray(kl.resistance)) {
+        kl.resistance.forEach((entry, idx) => {
+          const normalized = normalizeKeyLevelEntry(entry);
+          if (isNaN(normalized.level)) return;
           try {
-            const priceLine = series.createPriceLine({
-              price: level,
+            const line = candleSeries.createPriceLine({
+              price: normalized.level,
               color: '#ef4444',
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               axisLabelVisible: true,
-              title: `R${idx + 1}`,
+              title: `${degreeAbbrev}R${idx + 1}${sourceLabel}`,
             });
-            levelLinesRef.current.push(priceLine);
-          } catch (e) {}
-        }
-      });
-    }
-
-    // Invalidation level (prominent)
-    if (typeof keyLevels.invalidation === 'number' && !isNaN(keyLevels.invalidation)) {
-      try {
-        const priceLine = series.createPriceLine({
-          price: keyLevels.invalidation,
-          color: '#f59e0b',
-          lineWidth: 2,
-          lineStyle: LineStyle.LargeDashed,
-          axisLabelVisible: true,
-          title: 'INV',
+            levelLinesRef.current.push(line);
+          } catch {}
         });
-        levelLinesRef.current.push(priceLine);
-        console.log(`[LightweightChart] Drew invalidation line at ${keyLevels.invalidation}`);
-      } catch (e) {
-        console.warn('[LightweightChart] Failed to draw invalidation line:', e);
       }
-    } else {
-      console.warn('[LightweightChart] No valid invalidation level:', keyLevels.invalidation);
-    }
-  }, [analysis?.key_levels, isReady, toggles.showLevels]);
 
+      // Invalidation (orange, prominent)
+      const invLevel = getInvalidationLevel(kl.invalidation);
+      if (invLevel > 0 && !isNaN(invLevel)) {
+        try {
+          const line = candleSeries.createPriceLine({
+            price: invLevel,
+            color: '#f59e0b',
+            lineWidth: 2,
+            lineStyle: LineStyle.LargeDashed,
+            axisLabelVisible: true,
+            title: `${degreeAbbrev}INV`,
+          });
+          levelLinesRef.current.push(line);
+        } catch {}
+      }
+    };
+
+    // Execute all drawing in sequence (same operation)
+    drawWaves();
+    drawCages();
+    drawLevels();
+
+  }, [
+    isReady,
+    toggles.showWaves,
+    toggles.showCages,
+    toggles.showLevels,
+    normalizedActiveWavePoints,
+    baseLayer,
+    candleDateRange,
+    dominantDegree,
+    selectedAlternateIndex,
+  ]);
+
+  // ============================================================================
+  // RENDER
+  // ============================================================================
   return (
     <div className="relative w-full">
       {/* Warnings Banner */}
@@ -889,15 +738,20 @@ export function LightweightChart({
       {/* Overlay Toggle Controls */}
       <div className="absolute top-2 left-2 z-20 flex items-center gap-4 bg-background/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-border/50">
         <span className="text-sm font-medium text-foreground">{symbol}</span>
-        {analysis?.status && (
+        
+        {/* Degree + Status Badge */}
+        {baseLayer && (
           <span className={`text-xs px-2 py-0.5 rounded ${
-            analysis.status === 'conclusive' 
+            baseLayer.status === 'conclusive' 
               ? 'bg-emerald-500/20 text-emerald-400' 
+              : baseLayer.status === 'structure_only'
+              ? 'bg-slate-500/20 text-slate-400'
               : 'bg-amber-500/20 text-amber-400'
           }`}>
-            {analysis.status}
+            {baseLayer.degree} • {baseLayer.status === 'structure_only' ? 'Struct' : baseLayer.status}
           </span>
         )}
+        
         {selectedAlternateIndex !== null && (
           <span className="text-xs px-2 py-0.5 rounded bg-purple-500/20 text-purple-400">
             Alt #{selectedAlternateIndex + 1}
@@ -906,6 +760,7 @@ export function LightweightChart({
         
         <div className="h-4 w-px bg-border/50" />
         
+        {/* Wave Toggle */}
         <div className="flex items-center gap-1">
           <Switch
             id="toggle-waves"
@@ -919,6 +774,7 @@ export function LightweightChart({
           </Label>
         </div>
         
+        {/* Cage Toggle */}
         <div className="flex items-center gap-1">
           <Switch
             id="toggle-cages"
@@ -932,37 +788,58 @@ export function LightweightChart({
           </Label>
         </div>
         
-        <div className="flex items-center gap-1">
-          <Switch
-            id="toggle-levels"
-            checked={toggles.showLevels}
-            onCheckedChange={() => handleToggle('showLevels')}
-            className="h-4 w-7"
-          />
-          <Label htmlFor="toggle-levels" className="text-xs flex items-center gap-1 cursor-pointer">
-            <Target className="h-3 w-3 text-green-400" />
-            <span className="hidden sm:inline">Levels</span>
-          </Label>
-        </div>
+        {/* Levels Toggle with Tooltip */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1">
+                <Switch
+                  id="toggle-levels"
+                  checked={toggles.showLevels}
+                  onCheckedChange={() => handleToggle('showLevels')}
+                  className="h-4 w-7"
+                />
+                <Label htmlFor="toggle-levels" className="text-xs flex items-center gap-1 cursor-pointer">
+                  <Target className="h-3 w-3 text-green-400" />
+                  <span className="hidden sm:inline">Key Levels</span>
+                  <Info className="h-3 w-3 text-muted-foreground" />
+                </Label>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs text-xs">
+              <p className="font-semibold mb-1">Key Levels (S/R/INV)</p>
+              <ul className="space-y-0.5">
+                <li><span className="text-green-400">S1, S2...</span> = Supports from pivots</li>
+                <li><span className="text-red-400">R1, R2...</span> = Resistances from pivots</li>
+                <li><span className="text-amber-400">INV</span> = Invalidation (breaks count)</li>
+              </ul>
+              {baseLayer?.source === 'structure' && (
+                <p className="mt-1 text-muted-foreground italic">Source: Structure-derived</p>
+              )}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
 
-      {/* Wave Legend */}
+      {/* Wave Legend (right side) */}
       {toggles.showWaves && normalizedActiveWavePoints.length > 0 && (
         <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs bg-background/80 backdrop-blur-sm rounded-lg px-2 py-1 border border-border/50">
-          <span className="text-muted-foreground">Waves:</span>
+          <span className="text-muted-foreground">
+            {dominantDegree || 'Waves'}:
+          </span>
           {normalizedActiveWavePoints.slice(-8).map((wp, idx) => {
             const color = WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280';
             return (
               <span 
-                key={`${wp.norm.display}-${idx}`}
+                key={`${wp.norm.displayEw}-${idx}`}
                 className="px-1.5 py-0.5 rounded"
                 style={{ 
                   backgroundColor: `${color}20`,
                   color: color,
                 }}
-                title={`${wp.wave} @ ${wp.price.toFixed(2)}`}
+                title={`${wp.wave} @ ${wp.price.toFixed(2)} (${wp.date})`}
               >
-                {wp.norm.display}
+                {wp.norm.displayEw}
               </span>
             );
           })}
