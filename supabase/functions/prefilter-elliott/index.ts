@@ -247,10 +247,12 @@ function computeAdaptiveZigZag(
 
 // ============================================================================
 // STRUCTURE SCORING (Non-LLM Elliott Wave readiness)
-// Max theoretical raw score: 105 (30 + 25 + 30 + 20 + 0) - Wave3 bonus rarely applies
-// Realistic max: 115 (30 + 25 + 30 + 20 + 10) with W3 bonus
-// Normalized to 0-100 via: round((raw / 115) * 100)
+// Component maxima: alternation(30) + proportionality(25) + pivot_quality(30) + cage_presence(25) + wave3_bonus(10)
+// THEORETICAL_MAX = 120
+// Normalized to 0-100 via: round((raw / THEORETICAL_MAX) * 100), clamped to [0, 100]
 // ============================================================================
+
+const THEORETICAL_MAX = 120;
 
 function calculateAlternationScore(pivots: Pivot[]): number {
   if (pivots.length < 4) return 0;
@@ -399,24 +401,25 @@ function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[], atr: num
     : 0;
   
   // ============================================================
-  // CAGE SCORING LOGIC (max = 20, comments aligned with logic)
+  // CAGE SCORING LOGIC (max = 25, aligned with THEORETICAL_MAX = 120)
   // - exists -> +10 base
-  // - exists && !broken -> +10 extra (total 20)
-  // - exists && broken && break_strength_atr >= 0.8 -> +3 (total 13)
-  // - otherwise just exists bonus (10)
+  // - exists && !broken -> +15 extra (total 25)
+  // - exists && broken && break_strength_atr >= 0.8 -> +8 (total 18)
+  // - exists && broken (weak) -> +3 (total 13)
   // ============================================================
   let score = 10; // Base for cage existence
   
   if (!broken) {
-    score += 10; // Bonus for unbroken cage: total 20
+    score += 15; // Bonus for unbroken cage: total 25
   } else if (breakStrengthAtr >= 0.8) {
-    score += 3; // Small bonus for significant break: total 13
+    score += 8; // Good bonus for significant break: total 18
+  } else {
+    score += 3; // Small bonus for weak break: total 13
   }
-  // Otherwise just 10 for broken cage with weak break
   
-  // Max from cage scoring: 20 (comments now match logic)
+  // Max from cage scoring: 25
   return {
-    score: Math.min(20, score),
+    score: Math.min(25, score),
     info: {
       exists: true,
       broken,
@@ -543,16 +546,16 @@ serve(async (req) => {
     const regime_hint = determineRegime(candles);
     if (regime_hint === 'trending') notes.push('Trending regime');
 
-    // Calculate raw structure score (max realistic: 115)
+    // Calculate raw structure score (THEORETICAL_MAX = 120)
     const raw_structure_score = 
       alternation_score +       // Max 30
       proportionality_score +   // Max 25
       pivot_quality_score +     // Max 30
-      cage_presence_score +     // Max 20 (aligned with scoring logic)
+      cage_presence_score +     // Max 25
       wave3_bonus;              // Max 10 (only if 3+ impulse legs)
 
-    // Normalize to 0-100 scale: (raw / 115) * 100 (aligned with realistic max)
-    const structure_score = Math.round((raw_structure_score / 115) * 100);
+    // Normalize to 0-100 scale with clamping
+    const structure_score = Math.max(0, Math.min(100, Math.round((raw_structure_score / THEORETICAL_MAX) * 100)));
 
     const result: PrefilterResult = {
       symbol,
