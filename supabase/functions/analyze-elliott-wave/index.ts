@@ -1741,17 +1741,63 @@ serve(async (req) => {
 
     const { report, llm_status } = await callLLM(systemPrompt, userPrompt);
 
-    // Handle LLM failure
+    // Handle LLM failure - return structure-only fallback
     if (!report) {
+      // Compute deterministic invalidation for fallback
+      const lastPrice = requested.candles[requested.candles.length - 1].close;
+      const fallbackInvalidation = computeDeterministicInvalidation(
+        allPivots,
+        undefined,
+        undefined,
+        historicalLow,
+        lastPrice
+      );
+
+      // Structure-only fallback response
       return new Response(
         JSON.stringify({
           success: false,
+          structure_only: true,
           error: llm_status.error_message || 'LLM analysis failed',
           error_type: llm_status.error_type,
           retry_after_seconds: llm_status.retry_after_seconds,
-          symbol,
+          symbol: symbol.toUpperCase(),
           api_version: API_VERSION,
-          llm_status
+          analysis_timeframe_selected: effectiveTimeframe,
+          degree_focus: majorDegree.degree,
+          candles_used_count: requested.candles.length,
+          major_degree: majorDegree,
+          llm_status,
+          // Still provide candles and pivots for chart rendering
+          candles: requested.candles,
+          pivots: allPivots,
+          // Minimal analysis structure for fallback rendering
+          analysis: {
+            symbol: symbol.toUpperCase(),
+            timeframe: effectiveTimeframe,
+            status: 'inconclusive',
+            evidence_score: 0,
+            primary_count: null,
+            alternate_counts: [],
+            key_levels: {
+              support: [],
+              resistance: [],
+              fibonacci_targets: [],
+              invalidation: fallbackInvalidation
+            },
+            cage_features: cageFeatures,
+            forecast: null,
+            summary: 'LLM unavailable. Showing structure-only result with chart data and computed features.'
+          },
+          computed_features: {
+            cage_features: cageFeatures,
+            atr_values: {
+              requested: requested.atr
+            }
+          },
+          historical_low: historicalLow,
+          lastPrice,
+          timestamp: new Date().toISOString()
         }),
         { 
           status: llm_status.status_code === 429 ? 429 : 200,
@@ -1777,17 +1823,23 @@ serve(async (req) => {
     // Include cage features in the analysis report
     report.cage_features = cageFeatures;
 
-    // Return complete response
+    // Return complete response with candles as single source of truth
     return new Response(
       JSON.stringify({ 
         success: true,
         api_version: API_VERSION,
         symbol: symbol.toUpperCase(),
         timeframe: effectiveTimeframe,
+        analysis_timeframe_selected: effectiveTimeframe,
+        degree_focus: majorDegree.degree,
+        candles_used_count: requested.candles.length,
         mode,
         major_degree: majorDegree,
         analysis: report,
         llm_status,
+        // Single source of truth: candles aligned with analysis timeframe
+        candles: requested.candles,
+        pivots: allPivots,
         computed_features: {
           timeframes_used: {
             macro: macro.interval,

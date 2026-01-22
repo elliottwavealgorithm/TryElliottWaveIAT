@@ -9,7 +9,7 @@ import { ElliottAnalysisResult, FundamentalsSnapshot, Candle, Pivot, WaveAdjustm
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Settings2, ChevronLeft, AlertTriangle, CreditCard } from 'lucide-react';
+import { Settings2, ChevronLeft, AlertTriangle, CreditCard, Clock, TrendingUp, AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface LLMStatus {
@@ -39,27 +39,23 @@ export default function Screener() {
   const [isAdjusting, setIsAdjusting] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
   const [majorDegree, setMajorDegree] = useState<MajorDegree | null>(null);
+  const [analysisTimeframe, setAnalysisTimeframe] = useState<string>('');
+  const [isStructureOnly, setIsStructureOnly] = useState(false);
 
   const analyzeSymbol = useCallback(async (symbol: string, userAdjustments?: WaveAdjustment[]) => {
     setSelectedSymbol(symbol);
     setIsLoading(true);
     setSelectedAlternateIndex(null);
     setLlmStatus(null);
+    setIsStructureOnly(false);
     
     try {
-      // Fetch candles
-      const { data: ohlcvData } = await supabase.functions.invoke('fetch-ohlcv', {
-        body: { symbol, range: '2y', interval: '1d' }
-      });
-      
-      if (ohlcvData?.candles) {
-        setCandles(ohlcvData.candles);
-      }
-
-      // Run Elliott Wave analysis with auto major degree mode
+      // Run Elliott Wave analysis with auto timeframe mode
+      // Backend returns candles as single source of truth
       const { data, error } = await supabase.functions.invoke('analyze-elliott-wave', {
         body: { 
           symbol, 
+          timeframe: 'auto',
           mode: 'auto_major_degree',
           user_adjustments: userAdjustments ? {
             force_wave_labels: userAdjustments,
@@ -73,33 +69,53 @@ export default function Screener() {
       // Handle LLM status
       if (data?.llm_status) {
         setLlmStatus(data.llm_status);
-        
-        if (!data.llm_status.ok) {
-          if (data.llm_status.error_type === 'rate_limit') {
-            toast.error(`Rate limited — try again in ${data.llm_status.retry_after_seconds || 60}s`);
-          } else if (data.llm_status.error_type === 'payment_required') {
-            toast.error('LLM credits required — add credits in Lovable workspace');
-          } else {
-            toast.error(data.llm_status.error_message || 'Analysis failed');
-          }
-          return;
-        }
       }
 
+      // Check for structure-only fallback
+      if (data?.structure_only) {
+        setIsStructureOnly(true);
+        toast.warning('LLM unavailable. Showing structure-only result.');
+      }
+
+      // Set candles from response (single source of truth)
+      if (data?.candles) {
+        setCandles(data.candles);
+      }
+
+      // Set pivots from response
+      if (data?.pivots) {
+        setPivots(data.pivots);
+      }
+
+      // Set analysis timeframe
+      if (data?.analysis_timeframe_selected) {
+        setAnalysisTimeframe(data.analysis_timeframe_selected);
+      }
+
+      // Set major degree
       if (data?.major_degree) {
         setMajorDegree(data.major_degree);
       }
 
+      // Set analysis
       if (data?.analysis) {
         setAnalysis(data.analysis);
         setFundamentals(data.fundamentals || null);
         
-        if (data.pivots || data.requested_pivots?.meso) {
-          setPivots(data.pivots || data.requested_pivots?.meso || []);
+        if (!data.structure_only) {
+          toast.success(`${data.major_degree?.degree || 'Analysis'} complete for ${symbol}`);
         }
-        
-        toast.success(`${data.major_degree?.degree || 'Analysis'} complete for ${symbol}`);
       }
+
+      // Handle LLM errors with toasts
+      if (data?.llm_status && !data.llm_status.ok && !data.structure_only) {
+        if (data.llm_status.error_type === 'rate_limit') {
+          toast.error(`Rate limited — try again in ${data.llm_status.retry_after_seconds || 60}s`);
+        } else if (data.llm_status.error_type === 'payment_required') {
+          toast.error('LLM credits required — add credits in Lovable workspace');
+        }
+      }
+
     } catch (error) {
       console.error('Analysis error:', error);
       toast.error('Failed to analyze symbol');
@@ -107,6 +123,7 @@ export default function Screener() {
       setIsLoading(false);
     }
   }, []);
+
   const handleSelectAlternate = useCallback((index: number | null) => {
     setSelectedAlternateIndex(index);
   }, []);
@@ -127,6 +144,17 @@ export default function Screener() {
     }
   }, [selectedSymbol, analyzeSymbol]);
 
+  const formatTimeframe = (tf: string) => {
+    const map: Record<string, string> = {
+      '1mo': '1M',
+      '1wk': '1W',
+      '1d': '1D',
+      '4h': '4H',
+      '1h': '1H',
+    };
+    return map[tf] || tf.toUpperCase();
+  };
+
   return (
     <>
       <Helmet>
@@ -135,8 +163,23 @@ export default function Screener() {
       </Helmet>
       
       <div className="min-h-screen bg-background">
-        {/* LLM Status Banner */}
-        {llmStatus && !llmStatus.ok && (
+        {/* Structure-Only Banner */}
+        {isStructureOnly && (
+          <div className="px-4 py-2 flex items-center justify-between text-sm bg-amber-500/20 text-amber-300">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4" />
+              <span>LLM unavailable (rate limited). Showing structure-only result with chart data.</span>
+              {llmStatus?.retry_after_seconds && (
+                <span className="text-xs opacity-75">
+                  (retry in {llmStatus.retry_after_seconds}s)
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* LLM Status Banner (only if not structure-only) */}
+        {!isStructureOnly && llmStatus && !llmStatus.ok && (
           <div className={`px-4 py-2 flex items-center justify-between text-sm ${
             llmStatus.error_type === 'rate_limit' 
               ? 'bg-amber-500/20 text-amber-300' 
@@ -169,13 +212,27 @@ export default function Screener() {
                 </Button>
               </Link>
               <h1 className="text-xl font-bold">GOX Screener</h1>
+              
+              {/* Read-only Status Pills */}
+              {analysisTimeframe && (
+                <Badge variant="outline" className="text-xs gap-1">
+                  <Clock className="h-3 w-3" />
+                  {formatTimeframe(analysisTimeframe)}
+                </Badge>
+              )}
               {majorDegree && (
-                <Badge variant="outline" className="text-xs">
-                  {majorDegree.degree} • {majorDegree.years_of_data.toFixed(0)}y
+                <Badge variant="outline" className="text-xs gap-1">
+                  <TrendingUp className="h-3 w-3" />
+                  {majorDegree.degree}
+                </Badge>
+              )}
+              {analysis?.key_levels?.invalidation && (
+                <Badge variant="secondary" className="text-xs gap-1 bg-amber-500/20 text-amber-400 border-amber-500/30">
+                  INV: ${analysis.key_levels.invalidation.toFixed(2)}
                 </Badge>
               )}
             </div>
-            <span className="text-xs text-muted-foreground">Auto Major Degree Mode</span>
+            <span className="text-xs text-muted-foreground">Auto Timeframe Mode</span>
           </div>
         </header>
 
@@ -201,6 +258,11 @@ export default function Screener() {
                       {analysis.primary_count.pattern}
                     </span>
                   )}
+                  {isStructureOnly && (
+                    <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/30">
+                      Structure Only
+                    </Badge>
+                  )}
                 </div>
                 <Button 
                   size="sm" 
@@ -214,7 +276,7 @@ export default function Screener() {
               </div>
             )}
             
-            {/* Chart Area */}
+            {/* Chart Area - Uses candles from backend response */}
             <div className="flex-1 p-4">
               {selectedSymbol && candles.length > 0 ? (
                 <LightweightChart 
@@ -226,7 +288,7 @@ export default function Screener() {
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Select a symbol to view chart
+                  {isLoading ? 'Loading...' : 'Select a symbol to view chart'}
                 </div>
               )}
             </div>

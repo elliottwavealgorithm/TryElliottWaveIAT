@@ -315,15 +315,49 @@ export interface UserAdjustments {
 }
 
 // ============================================================================
-// API RESPONSE WRAPPER
+// API RESPONSE WRAPPER (v0.3 with candles and auto timeframe)
 // ============================================================================
+
+export interface MajorDegreeInfo {
+  degree: 'Supercycle' | 'Cycle' | 'Primary' | 'Intermediate' | string;
+  timeframe_used: string;
+  from_historical_low: { date: string; price: number };
+  why_this_degree: string;
+  years_of_data: number;
+}
+
+export interface LLMStatusInfo {
+  ok: boolean;
+  status_code: number;
+  retry_after_seconds?: number;
+  error_type?: 'rate_limit' | 'payment_required' | 'server_error' | 'parse_error';
+  error_message?: string;
+}
 
 export interface AnalysisApiResponse {
   success: boolean;
   api_version: string;
   symbol: string;
   timeframe: string;
+  
+  // v0.3: Auto timeframe fields
+  analysis_timeframe_selected: string;
+  degree_focus: string;
+  candles_used_count: number;
+  mode: 'auto_major_degree' | 'manual';
+  major_degree: MajorDegreeInfo;
+  
+  // v0.3: LLM status and structure-only fallback
+  llm_status: LLMStatusInfo;
+  structure_only?: boolean;
+  
+  // Single source of truth: candles aligned with analysis timeframe
+  candles: Candle[];
+  pivots: Pivot[];
+  
   analysis: ElliottAnalysisResult;
+  fundamentals?: FundamentalsSnapshot;
+  
   computed_features: {
     timeframes_used: {
       macro: string;
@@ -341,7 +375,7 @@ export interface AnalysisApiResponse {
       meso: any[];
       micro: any[];
     };
-    cage_features: any;
+    cage_features: CageFeatures;
     atr_values: {
       macro: number;
       meso: number;
@@ -356,5 +390,7 @@ export interface AnalysisApiResponse {
   timestamp: string;
   training_mode: boolean;
   error?: string;
+  error_type?: string;
+  retry_after_seconds?: number;
   suggestions?: string[];
 }
