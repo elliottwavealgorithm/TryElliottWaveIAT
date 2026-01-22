@@ -2,17 +2,17 @@ import { useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, TrendingUp, Zap, Bot, ChevronDown, Mail, ArrowRight, BarChart3 } from "lucide-react";
+import { Loader2, TrendingUp, Zap, Bot, ChevronDown, Mail, ArrowRight, BarChart3, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { TradingViewWidget } from "@/components/widgets/TradingViewWidget";
-import { TimeframeSelector } from "@/components/elliott/TimeframeSelector";
+import { LightweightChart } from "@/components/charts/LightweightChart";
 import { WaveCountDisplay } from "@/components/elliott/WaveCountDisplay";
 import { AnalysisChat } from "@/components/elliott/AnalysisChat";
 import goxLogo from "@/assets/gox-logo.png";
+import { Candle } from "@/types/analysis";
 
 interface ElliottAnalysis {
   symbol: string;
@@ -23,12 +23,15 @@ interface ElliottAnalysis {
   dataPoints: number;
   loading: boolean;
   timestamp?: string;
+  analysisTimeframe?: string;
+  degreeFocus?: string;
+  llmStatus?: { success: boolean; fallback_reason?: string };
 }
 
 export default function Index() {
   const [symbol, setSymbol] = useState("NFLX");
-  const [timeframe, setTimeframe] = useState("1d");
   const [analysis, setAnalysis] = useState<ElliottAnalysis | null>(null);
+  const [candles, setCandles] = useState<Candle[]>([]);
   const [waitlistEmail, setWaitlistEmail] = useState("");
   const [waitlistLoading, setWaitlistLoading] = useState(false);
   const { toast } = useToast();
@@ -90,22 +93,22 @@ export default function Index() {
 
     setAnalysis({ 
       symbol, 
-      timeframe, 
+      timeframe: 'auto', 
       analysis: null, 
       pivots: [], 
       lastPrice: 0, 
       dataPoints: 0,
       loading: true 
     });
+    setCandles([]);
 
     try {
       const { data, error } = await supabase.functions.invoke('analyze-elliott-wave', {
-        body: { symbol, timeframe }
+        body: { symbol, timeframe: 'auto', mode: 'auto_major_degree' }
       });
 
       // Handle edge function errors (including 404)
       if (error) {
-        // Try to parse error context for suggestions
         const errorContext = (error as any)?.context;
         if (errorContext?.suggestions) {
           toast({
@@ -133,20 +136,29 @@ export default function Index() {
         throw new Error(data.error || 'Analysis failed');
       }
 
+      // Set candles from response (single source of truth)
+      if (data.candles && Array.isArray(data.candles)) {
+        setCandles(data.candles);
+      }
+
       setAnalysis({
         symbol: data.symbol,
-        timeframe: data.timeframe,
+        timeframe: data.analysis_timeframe_selected || data.timeframe || 'auto',
         analysis: data.analysis,
         pivots: data.pivots || [],
         lastPrice: data.lastPrice,
-        dataPoints: data.dataPoints,
+        dataPoints: data.dataPoints || data.candles?.length || 0,
         loading: false,
-        timestamp: data.timestamp
+        timestamp: data.timestamp,
+        analysisTimeframe: data.analysis_timeframe_selected,
+        degreeFocus: data.degree_focus,
+        llmStatus: data.llm_status
       });
 
+      const llmInfo = data.llm_status?.success ? '' : ' (Structure-only)';
       toast({
-        title: "Analysis Complete",
-        description: `${data.symbol} analyzed with ${data.pivots?.length || 0} pivots detected`,
+        title: `Analysis Complete${llmInfo}`,
+        description: `${data.symbol} • ${data.analysis_timeframe_selected || 'auto'} • ${data.pivots?.length || 0} pivots`,
       });
     } catch (error: any) {
       console.error('Error:', error);
@@ -270,11 +282,7 @@ export default function Index() {
                     className="w-28 bg-transparent border-0 font-mono text-lg focus-visible:ring-0 px-0"
                   />
                   <div className="w-px h-8 bg-border" />
-                  <TimeframeSelector 
-                    selected={timeframe} 
-                    onSelect={setTimeframe}
-                    compact
-                  />
+                  <Badge variant="outline" className="text-xs">Auto TF</Badge>
                   <Button 
                     onClick={analyzeSymbol}
                     disabled={analysis?.loading}
@@ -363,19 +371,51 @@ export default function Index() {
         {/* Full Width Chart Section */}
         <section id="chart-section" className="py-16 border-t border-border/50">
           <div className="px-4">
-            <div className="mb-8 text-center">
-              <h2 className="text-2xl font-semibold mb-2">Live Chart</h2>
-              <p className="text-muted-foreground text-sm">
-                {symbol} • Real-time data from TradingView
-              </p>
-            </div>
-            <div className="max-w-[1800px] mx-auto">
-              <div className="clean-card overflow-hidden">
-                <TradingViewWidget 
-                  symbol={symbol || "NFLX"} 
-                  height={700}
-                />
+            <div className="mb-6 text-center">
+              <h2 className="text-2xl font-semibold mb-2">Elliott Wave Chart</h2>
+              <div className="flex items-center justify-center gap-3 text-sm">
+                <span className="text-muted-foreground">{symbol}</span>
+                {analysis?.analysisTimeframe && (
+                  <Badge variant="outline">{analysis.analysisTimeframe.toUpperCase()}</Badge>
+                )}
+                {analysis?.degreeFocus && (
+                  <Badge variant="secondary">{analysis.degreeFocus}</Badge>
+                )}
+                {analysis?.analysis?.key_levels?.invalidation && (
+                  <Badge variant="destructive" className="gap-1">
+                    Invalidation: ${Number(analysis.analysis.key_levels.invalidation).toFixed(2)}
+                  </Badge>
+                )}
               </div>
+            </div>
+            
+            {/* LLM Fallback Banner */}
+            {analysis?.llmStatus && !analysis.llmStatus.success && (
+              <div className="max-w-[1800px] mx-auto mb-4">
+                <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span className="text-sm">
+                    LLM unavailable ({analysis.llmStatus.fallback_reason || 'rate limited'}). Showing structure-only result.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="max-w-[1800px] mx-auto">
+              {candles.length > 0 ? (
+                <LightweightChart 
+                  candles={candles}
+                  symbol={symbol}
+                  analysis={analysis?.analysis}
+                  height={600}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[600px] text-muted-foreground border border-dashed border-border rounded-lg bg-card/50">
+                  <BarChart3 className="h-12 w-12 mb-4 opacity-30" />
+                  <p className="text-lg">Enter a symbol and click Analyze</p>
+                  <p className="text-sm opacity-70">Wave overlays will render on this chart</p>
+                </div>
+              )}
             </div>
           </div>
         </section>
