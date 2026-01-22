@@ -2,7 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const API_VERSION = "0.3";
+const API_VERSION = "0.4";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -809,17 +809,39 @@ serve(async (req) => {
       }
     }
 
-    // Calculate fundamentals_score and final_score
+    // Calculate fundamentals_score and final_score with protections
     for (const ranking of topRankings) {
+      // PROTECTION: Zero score for symbols with errors or insufficient data
+      if (ranking.error) {
+        ranking.fundamentals_score = 0;
+        ranking.final_score = 0;
+        ranking.attention_score_13f = null;
+        continue;
+      }
+      
       // Fundamentals score (simple heuristic)
       let fundScore = 50; // Base score
-      if (ranking.fundamentals) {
+      let hasMissingFundamentals = false;
+      
+      if (include_fundamentals && ranking.fundamentals) {
         const f = ranking.fundamentals;
         if (f.earningsGrowth !== null && f.earningsGrowth > 0) fundScore += 15;
         if (f.revenueGrowth !== null && f.revenueGrowth > 0) fundScore += 10;
         if (f.forwardPE !== null && f.forwardPE > 0 && f.forwardPE < 30) fundScore += 10;
-        if (!f.marketCap) fundScore -= 10; // Penalize missing data
+        
+        // PROTECTION: Penalize missing fundamentals when requested
+        if (f.marketCap === null && f.sector === null) {
+          fundScore -= 15; // Significant penalty for completely missing fundamentals
+          hasMissingFundamentals = true;
+        } else if (!f.marketCap) {
+          fundScore -= 10; // Penalize missing market cap
+        }
+      } else if (include_fundamentals && !ranking.fundamentals) {
+        // Fundamentals requested but completely unavailable
+        fundScore -= 15;
+        hasMissingFundamentals = true;
       }
+      
       ranking.fundamentals_score = Math.min(100, Math.max(0, fundScore));
       
       // Attention score placeholder
@@ -828,11 +850,17 @@ serve(async (req) => {
       // Final score: weighted combination
       // 55% pre_filter + 30% structure + 15% fundamentals
       const structScore = ranking.structure_score ?? ranking.ew_structural_score ?? ranking.pre_filter_score;
-      ranking.final_score = Math.round(
-        (ranking.pre_filter_score * 0.55 +
+      let finalScore = 
+        ranking.pre_filter_score * 0.55 +
         structScore * 0.30 +
-        (ranking.fundamentals_score || 50) * 0.15) * 10
-      ) / 10;
+        (ranking.fundamentals_score || 50) * 0.15;
+      
+      // PROTECTION: Subtract penalty if data quality issues detected
+      if (hasMissingFundamentals) {
+        finalScore = Math.max(0, finalScore - 5);
+      }
+      
+      ranking.final_score = Math.round(finalScore * 10) / 10;
     }
 
     // Re-sort by final_score
