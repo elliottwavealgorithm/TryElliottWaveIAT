@@ -209,6 +209,34 @@ serve(async (req) => {
   }
 
   try {
+    // ============================================================
+    // AUTH HARDENING: Require authenticated user (no service-role fallback)
+    // ============================================================
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    
+    // Get auth token from request header
+    const authHeader = req.headers.get('authorization');
+    
+    // Create client with user's auth token for user validation
+    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: authHeader ? { Authorization: authHeader } : {}
+      }
+    });
+    
+    // Validate authenticated user
+    const { data: { user }, error: authError } = await userClient.auth.getUser();
+    
+    if (authError || !user) {
+      console.error('Auth validation failed:', authError?.message || 'No user');
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const body: DeepAnalysisRequest = await req.json();
     const { 
       scan_id, 
@@ -225,18 +253,31 @@ serve(async (req) => {
       throw new Error('symbols array is required');
     }
 
+    // ============================================================
+    // SCAN OWNERSHIP VALIDATION: Prevent access to foreign scans
+    // ============================================================
+    const { data: scan, error: scanError } = await userClient
+      .from('scans')
+      .select('id')
+      .eq('id', scan_id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (scanError || !scan) {
+      console.error('Scan ownership validation failed:', scanError?.message || 'Not found');
+      return new Response(
+        JSON.stringify({ error: 'Forbidden: scan not owned by user' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Clamp concurrency to reasonable bounds
     const effectiveConcurrency = Math.min(Math.max(concurrency, 1), 5);
-
-    // Get auth token from request
-    const authHeader = req.headers.get('authorization');
     
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    // Use service role client for DB operations (RLS already validated ownership)
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`[v${API_VERSION}] Running deep analysis for ${symbols.length} symbols, scan_id=${scan_id}, concurrency=${effectiveConcurrency}`);
+    console.log(`[v${API_VERSION}] Running deep analysis for ${symbols.length} symbols, scan_id=${scan_id}, user=${user.id}, concurrency=${effectiveConcurrency}`);
 
     // Split symbols into batches for concurrent processing
     const batches: string[][] = [];

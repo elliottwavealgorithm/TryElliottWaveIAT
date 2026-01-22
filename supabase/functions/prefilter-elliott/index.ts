@@ -35,6 +35,8 @@ interface CageInfo {
   exists: boolean;
   broken: boolean;
   break_direction?: 'up' | 'down';
+  break_price?: number;
+  boundary_value_at_break?: number;
   break_strength_atr?: number;
 }
 
@@ -245,8 +247,9 @@ function computeAdaptiveZigZag(
 
 // ============================================================================
 // STRUCTURE SCORING (Non-LLM Elliott Wave readiness)
-// Max theoretical raw score: 120 (30 + 25 + 30 + 25 + 10)
-// Normalized to 0-100 via: round((raw / 120) * 100)
+// Max theoretical raw score: 105 (30 + 25 + 30 + 20 + 0) - Wave3 bonus rarely applies
+// Realistic max: 115 (30 + 25 + 30 + 20 + 10) with W3 bonus
+// Normalized to 0-100 via: round((raw / 115) * 100)
 // ============================================================================
 
 function calculateAlternationScore(pivots: Pivot[]): number {
@@ -354,19 +357,54 @@ function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[], atr: num
   // Calculate slope and check if channel is valid
   const slope = (w4Candidate.price - w2Candidate.price) / (w4Candidate.index - w2Candidate.index);
   
+  // Project upper boundary from high pivots
+  const topSlope = highPivots.length >= 2 
+    ? (highPivots[highPivots.length - 1].price - highPivots[highPivots.length - 2].price) / 
+      (highPivots[highPivots.length - 1].index - highPivots[highPivots.length - 2].index)
+    : slope;
+  
   // Check if recent candles respect the channel
   const lastIdx = candles.length - 1;
   const projectedLower = w2Candidate.price + slope * (lastIdx - w2Candidate.index);
+  const projectedUpper = highPivots[highPivots.length - 2] 
+    ? highPivots[highPivots.length - 2].price + topSlope * (lastIdx - highPivots[highPivots.length - 2].index)
+    : projectedLower + atr * 3; // Fallback upper boundary
   const lastClose = candles[lastIdx].close;
   
-  const broken = lastClose < projectedLower;
-  const breakStrengthAtr = broken ? Math.abs(projectedLower - lastClose) / atr : 0;
+  // ============================================================
+  // BIDIRECTIONAL CAGE BREAK DETECTION
+  // ============================================================
+  const brokeDown = lastClose < projectedLower;
+  const brokeUp = lastClose > projectedUpper;
   
-  // FIXED cage scoring logic:
-  // exists -> +10
-  // exists && !broken -> +10 extra (total 20)
-  // exists && broken && break_strength_atr >= 0.8 -> +3 (total 13)
-  // otherwise just exists bonus (10)
+  let broken = false;
+  let break_direction: 'up' | 'down' | undefined = undefined;
+  let break_price: number | undefined = undefined;
+  let boundary_value_at_break: number | undefined = undefined;
+  
+  if (brokeDown) {
+    broken = true;
+    break_direction = 'down';
+    break_price = lastClose;
+    boundary_value_at_break = projectedLower;
+  } else if (brokeUp) {
+    broken = true;
+    break_direction = 'up';
+    break_price = lastClose;
+    boundary_value_at_break = projectedUpper;
+  }
+  
+  const breakStrengthAtr = broken && boundary_value_at_break 
+    ? Math.abs(boundary_value_at_break - lastClose) / atr 
+    : 0;
+  
+  // ============================================================
+  // CAGE SCORING LOGIC (max = 20, comments aligned with logic)
+  // - exists -> +10 base
+  // - exists && !broken -> +10 extra (total 20)
+  // - exists && broken && break_strength_atr >= 0.8 -> +3 (total 13)
+  // - otherwise just exists bonus (10)
+  // ============================================================
   let score = 10; // Base for cage existence
   
   if (!broken) {
@@ -376,13 +414,15 @@ function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[], atr: num
   }
   // Otherwise just 10 for broken cage with weak break
   
-  // Max from cage: ~25 theoretical (but realistic max is 20)
+  // Max from cage scoring: 20 (comments now match logic)
   return {
-    score: Math.min(25, score),
+    score: Math.min(20, score),
     info: {
       exists: true,
       broken,
-      break_direction: broken ? 'down' : undefined,
+      break_direction,
+      break_price,
+      boundary_value_at_break,
       break_strength_atr: breakStrengthAtr
     }
   };
@@ -503,16 +543,16 @@ serve(async (req) => {
     const regime_hint = determineRegime(candles);
     if (regime_hint === 'trending') notes.push('Trending regime');
 
-    // Calculate raw structure score (max theoretical: 120)
+    // Calculate raw structure score (max realistic: 115)
     const raw_structure_score = 
       alternation_score +       // Max 30
       proportionality_score +   // Max 25
       pivot_quality_score +     // Max 30
-      cage_presence_score +     // Max 25
-      wave3_bonus;              // Max 10
+      cage_presence_score +     // Max 20 (aligned with scoring logic)
+      wave3_bonus;              // Max 10 (only if 3+ impulse legs)
 
-    // Normalize to 0-100 scale: (raw / 120) * 100
-    const structure_score = Math.round((raw_structure_score / 120) * 100);
+    // Normalize to 0-100 scale: (raw / 115) * 100 (aligned with realistic max)
+    const structure_score = Math.round((raw_structure_score / 115) * 100);
 
     const result: PrefilterResult = {
       symbol,
