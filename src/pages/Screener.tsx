@@ -8,8 +8,24 @@ import { supabase } from '@/integrations/supabase/client';
 import { ElliottAnalysisResult, FundamentalsSnapshot, Candle, Pivot, WaveAdjustment } from '@/types/analysis';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Settings2, ChevronLeft } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Settings2, ChevronLeft, AlertTriangle, CreditCard } from 'lucide-react';
 import { Link } from 'react-router-dom';
+
+interface LLMStatus {
+  ok: boolean;
+  status_code: number;
+  error_type?: string;
+  error_message?: string;
+  retry_after_seconds?: number;
+}
+
+interface MajorDegree {
+  degree: string;
+  timeframe_used: string;
+  years_of_data: number;
+  why_this_degree: string;
+}
 
 export default function Screener() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('');
@@ -21,11 +37,14 @@ export default function Screener() {
   const [selectedAlternateIndex, setSelectedAlternateIndex] = useState<number | null>(null);
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [isAdjusting, setIsAdjusting] = useState(false);
+  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
+  const [majorDegree, setMajorDegree] = useState<MajorDegree | null>(null);
 
   const analyzeSymbol = useCallback(async (symbol: string, userAdjustments?: WaveAdjustment[]) => {
     setSelectedSymbol(symbol);
     setIsLoading(true);
     setSelectedAlternateIndex(null);
+    setLlmStatus(null);
     
     try {
       // Fetch candles
@@ -37,11 +56,11 @@ export default function Screener() {
         setCandles(ohlcvData.candles);
       }
 
-      // Run Elliott Wave analysis
+      // Run Elliott Wave analysis with auto major degree mode
       const { data, error } = await supabase.functions.invoke('analyze-elliott-wave', {
         body: { 
           symbol, 
-          timeframe: '1D',
+          mode: 'auto_major_degree',
           user_adjustments: userAdjustments ? {
             force_wave_labels: userAdjustments,
             notes: 'User manual adjustment'
@@ -51,16 +70,35 @@ export default function Screener() {
 
       if (error) throw error;
 
+      // Handle LLM status
+      if (data?.llm_status) {
+        setLlmStatus(data.llm_status);
+        
+        if (!data.llm_status.ok) {
+          if (data.llm_status.error_type === 'rate_limit') {
+            toast.error(`Rate limited — try again in ${data.llm_status.retry_after_seconds || 60}s`);
+          } else if (data.llm_status.error_type === 'payment_required') {
+            toast.error('LLM credits required — add credits in Lovable workspace');
+          } else {
+            toast.error(data.llm_status.error_message || 'Analysis failed');
+          }
+          return;
+        }
+      }
+
+      if (data?.major_degree) {
+        setMajorDegree(data.major_degree);
+      }
+
       if (data?.analysis) {
         setAnalysis(data.analysis);
         setFundamentals(data.fundamentals || null);
         
-        // Store pivots for adjustment dialog
-        if (data.pivots) {
-          setPivots(data.pivots);
+        if (data.pivots || data.requested_pivots?.meso) {
+          setPivots(data.pivots || data.requested_pivots?.meso || []);
         }
         
-        toast.success(`Analysis complete for ${symbol}`);
+        toast.success(`${data.major_degree?.degree || 'Analysis'} complete for ${symbol}`);
       }
     } catch (error) {
       console.error('Analysis error:', error);
@@ -69,7 +107,6 @@ export default function Screener() {
       setIsLoading(false);
     }
   }, []);
-
   const handleSelectAlternate = useCallback((index: number | null) => {
     setSelectedAlternateIndex(index);
   }, []);
@@ -98,6 +135,29 @@ export default function Screener() {
       </Helmet>
       
       <div className="min-h-screen bg-background">
+        {/* LLM Status Banner */}
+        {llmStatus && !llmStatus.ok && (
+          <div className={`px-4 py-2 flex items-center justify-between text-sm ${
+            llmStatus.error_type === 'rate_limit' 
+              ? 'bg-amber-500/20 text-amber-300' 
+              : 'bg-red-500/20 text-red-300'
+          }`}>
+            <div className="flex items-center gap-2">
+              {llmStatus.error_type === 'payment_required' ? (
+                <CreditCard className="h-4 w-4" />
+              ) : (
+                <AlertTriangle className="h-4 w-4" />
+              )}
+              <span>{llmStatus.error_message}</span>
+              {llmStatus.retry_after_seconds && (
+                <span className="text-xs opacity-75">
+                  (retry in {llmStatus.retry_after_seconds}s)
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <header className="border-b border-border/50 px-4 py-3">
           <div className="flex items-center justify-between">
@@ -109,8 +169,13 @@ export default function Screener() {
                 </Button>
               </Link>
               <h1 className="text-xl font-bold">GOX Screener</h1>
+              {majorDegree && (
+                <Badge variant="outline" className="text-xs">
+                  {majorDegree.degree} • {majorDegree.years_of_data.toFixed(0)}y
+                </Badge>
+              )}
             </div>
-            <span className="text-xs text-muted-foreground">Elliott Wave + Fundamentals</span>
+            <span className="text-xs text-muted-foreground">Auto Major Degree Mode</span>
           </div>
         </header>
 

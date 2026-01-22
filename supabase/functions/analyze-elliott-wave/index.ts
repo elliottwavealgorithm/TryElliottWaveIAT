@@ -2,7 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const lovableApiKey = Deno.env.get('LOVABLE_API_KEY');
-const API_VERSION = "0.2";
+const API_VERSION = "0.3";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -174,6 +174,27 @@ interface CacheEntry {
   data: Candle[];
   timestamp: number;
   ttl: number;
+}
+
+interface LLMStatus {
+  ok: boolean;
+  status_code: number;
+  retry_after_seconds?: number;
+  error_type?: 'rate_limit' | 'payment_required' | 'server_error' | 'parse_error';
+  error_message?: string;
+}
+
+interface MajorDegreeInfo {
+  degree: 'Supercycle' | 'Cycle' | 'Primary' | 'Intermediate';
+  timeframe_used: string;
+  from_historical_low: { date: string; price: number };
+  why_this_degree: string;
+  years_of_data: number;
+}
+
+interface Line {
+  slope: number;
+  intercept: number;
 }
 
 // ============================================================================
@@ -505,13 +526,12 @@ function calculateSegmentFeaturesForPivots(
       let trough = segment[0].close;
       for (const candle of segment) {
         if (candle.low < trough) trough = candle.low;
-        const dd = (candle.high - trough) / trough * 100;
-        if (dd > maxDrawdown) maxDrawdown = dd;
+        const rally = trough > 0 ? (candle.high - trough) / trough * 100 : 0;
+        if (rally > maxDrawdown) maxDrawdown = rally;
       }
     }
     
     const rsi_at_end = rsiValues[toIdx] || 50;
-    const direction = pct_move > 0 ? 'up' : 'down';
     
     features.push({
       from_pivot: i,
@@ -526,7 +546,7 @@ function calculateSegmentFeaturesForPivots(
       volume_slope,
       max_drawdown: maxDrawdown,
       rsi_at_end,
-      direction
+      direction: pct_move > 0 ? 'up' : 'down'
     });
   }
   
@@ -546,124 +566,55 @@ function calculateMultiScaleSegmentFeatures(
 }
 
 // ============================================================================
-// SECTION 7: CAGE THEORY IMPLEMENTATION (CANDIDATE-BASED)
+// SECTION 7: CAGE FEATURES CALCULATION (MULTI-CANDIDATE + ATR BREAK STRENGTH)
 // ============================================================================
-
-interface Line {
-  slope: number;
-  intercept: number;
-}
-
-function buildLine(x1: number, y1: number, x2: number, y2: number): Line {
-  const slope = (y2 - y1) / (x2 - x1);
-  const intercept = y1 - slope * x1;
-  return { slope, intercept };
-}
-
-function getLineValue(line: Line, x: number): number {
-  return line.slope * x + line.intercept;
-}
 
 function detectCageBreakWithATR(
   cage: { upper: Line; lower: Line },
   candles: Candle[],
-  startIdx: number,
-  atr: number,
-  confirmBars = 2,
-  tolerancePct = 0.5
+  startCheckIdx: number,
+  atr: number
 ): CageCandidateBreak {
-  let broken = false;
-  let direction: 'up' | 'down' | undefined = undefined;
-  let strengthPct = 0;
-  let strengthAtr = 0;
-  let barsSince = 0;
-  let breakDate: string | undefined = undefined;
-  let confirmedBreakIdx = -1;
-  let breakPrice: number | null = null;
-  let boundaryValue: number | null = null;
+  const result: CageCandidateBreak = {
+    break_strength_pct: 0,
+    break_strength_atr: 0,
+    broken: false,
+    bars_since_break: 0,
+    break_index: null,
+    break_price: null,
+    boundary_value_at_break: null
+  };
 
-  for (let i = startIdx; i < candles.length; i++) {
-    const upperValue = getLineValue(cage.upper, i);
-    const lowerValue = getLineValue(cage.lower, i);
-    const tolerance = (upperValue - lowerValue) * (tolerancePct / 100);
-    
-    if (candles[i].close > upperValue + tolerance) {
-      let confirmed = true;
-      for (let j = 1; j <= confirmBars && i + j < candles.length; j++) {
-        if (candles[i + j].close <= upperValue) {
-          confirmed = false;
-          break;
-        }
-      }
-      if (confirmed && !broken) {
-        broken = true;
-        direction = 'up';
-        confirmedBreakIdx = i;
-        breakDate = candles[i].date;
-        breakPrice = candles[i].close;
-        boundaryValue = upperValue;
-        const breakDist = candles[i].close - upperValue;
-        strengthPct = (breakDist / upperValue) * 100;
-        strengthAtr = atr > 0 ? breakDist / atr : 0;
-        break;
-      }
-    }
-    
-    if (candles[i].close < lowerValue - tolerance) {
-      let confirmed = true;
-      for (let j = 1; j <= confirmBars && i + j < candles.length; j++) {
-        if (candles[i + j].close >= lowerValue) {
-          confirmed = false;
-          break;
-        }
-      }
-      if (confirmed && !broken) {
-        broken = true;
-        direction = 'down';
-        confirmedBreakIdx = i;
-        breakDate = candles[i].date;
-        breakPrice = candles[i].close;
-        boundaryValue = lowerValue;
-        const breakDist = lowerValue - candles[i].close;
-        strengthPct = (breakDist / lowerValue) * 100;
-        strengthAtr = atr > 0 ? breakDist / atr : 0;
-        break;
-      }
+  if (!cage.upper || !cage.lower || atr === 0) return result;
+
+  for (let i = Math.max(startCheckIdx, 0); i < candles.length; i++) {
+    const projectedUpper = cage.upper.slope * i + cage.upper.intercept;
+    const projectedLower = cage.lower.slope * i + cage.lower.intercept;
+    const close = candles[i].close;
+
+    const brokeDown = close < projectedLower;
+    const brokeUp = close > projectedUpper;
+
+    if (brokeDown || brokeUp) {
+      const distance = brokeDown 
+        ? (projectedLower - close) 
+        : (close - projectedUpper);
+      const boundary = brokeDown ? projectedLower : projectedUpper;
+      
+      result.broken = true;
+      result.break_direction = brokeDown ? 'down' : 'up';
+      result.break_strength_pct = (distance / boundary) * 100;
+      result.break_strength_atr = distance / atr;
+      result.bars_since_break = candles.length - 1 - i;
+      result.first_break_date = candles[i].date;
+      result.break_index = i;
+      result.break_price = close;
+      result.boundary_value_at_break = boundary;
+      break;
     }
   }
 
-  if (confirmedBreakIdx >= 0) {
-    barsSince = candles.length - 1 - confirmedBreakIdx;
-  }
-
-  return { 
-    broken, 
-    break_direction: direction, 
-    break_strength_pct: Math.round(strengthPct * 1000) / 1000,
-    break_strength_atr: Math.round(strengthAtr * 100) / 100,
-    bars_since_break: barsSince, 
-    first_break_date: breakDate,
-    break_index: confirmedBreakIdx >= 0 ? confirmedBreakIdx : null,
-    break_price: breakPrice,
-    boundary_value_at_break: boundaryValue
-  };
-}
-
-function buildImpulseCage24(
-  w2End: { index: number; price: number },
-  w3End: { index: number; price: number },
-  w4End: { index: number; price: number }
-): { upper: Line; lower: Line } | null {
-  if (!w2End || !w3End || !w4End) return null;
-  if (w2End.index >= w4End.index) return null;
-  
-  const lower = buildLine(w2End.index, w2End.price, w4End.index, w4End.price);
-  const upper = {
-    slope: lower.slope,
-    intercept: w3End.price - lower.slope * w3End.index
-  };
-  
-  return { upper, lower };
+  return result;
 }
 
 function generateCageCandidates(
@@ -672,39 +623,50 @@ function generateCageCandidates(
   atr: number
 ): CageCandidate[] {
   const candidates: CageCandidate[] = [];
-  const lastCandleIndex = candles.length - 1;
-  const lastCandleDate = candles[lastCandleIndex]?.date || '';
   
-  if (pivots.length < 4) {
-    return [{ 
-      label: "insufficient_pivots", 
-      exists: false, 
-      break_info: { broken: false, break_strength_pct: 0, break_strength_atr: 0, bars_since_break: 0 }
-    }];
-  }
-
-  // Helper to build candidate with dates and points
-  const buildCandidate = (
-    label: string,
-    cage: { upper: Line; lower: Line },
-    startIdx: number,
-    anchorIdx: number,
-    w2Idx: number,
-    w3Idx: number,
-    w4Idx: number
-  ): CageCandidate => {
-    const breakInfo = detectCageBreakWithATR(cage, candles, anchorIdx + 1, atr);
-    const startDate = candles[startIdx]?.date || '';
-    const anchorDate = candles[anchorIdx]?.date || '';
+  const lowPivots = pivots.filter(p => p.type === 'low').slice(-6);
+  const highPivots = pivots.filter(p => p.type === 'high').slice(-6);
+  
+  if (lowPivots.length < 2 || highPivots.length < 1) return candidates;
+  
+  for (let i = 0; i < lowPivots.length - 1; i++) {
+    const w2 = lowPivots[i];
+    const w4 = lowPivots[i + 1];
     
-    // Compute y values at start and end for rendering
-    const upperY1 = getLineValue(cage.upper, startIdx);
-    const upperY2 = getLineValue(cage.upper, lastCandleIndex);
-    const lowerY1 = getLineValue(cage.lower, startIdx);
-    const lowerY2 = getLineValue(cage.lower, lastCandleIndex);
+    const middleHighs = highPivots.filter(h => h.index > w2.index && h.index < w4.index);
+    if (middleHighs.length === 0) continue;
     
-    return {
-      label,
+    const w3 = middleHighs.reduce((a, b) => a.price > b.price ? a : b);
+    
+    const barsW2toW4 = w4.index - w2.index;
+    if (barsW2toW4 < 5) continue;
+    
+    const lowerSlope = (w4.price - w2.price) / barsW2toW4;
+    const lowerIntercept = w2.price - lowerSlope * w2.index;
+    
+    const upperSlope = lowerSlope;
+    const upperIntercept = w3.price - upperSlope * w3.index;
+    
+    const cage = {
+      upper: { slope: upperSlope, intercept: upperIntercept },
+      lower: { slope: lowerSlope, intercept: lowerIntercept }
+    };
+    
+    const breakInfo = detectCageBreakWithATR(cage, candles, w4.index + 1, atr);
+    
+    const lastCandleIndex = candles.length - 1;
+    const lastCandleDate = candles[lastCandleIndex].date;
+    
+    const startDate = candles[w2.index].date;
+    const anchorDate = candles[w4.index].date;
+    
+    const upperY1 = upperSlope * w2.index + upperIntercept;
+    const upperY2 = upperSlope * lastCandleIndex + upperIntercept;
+    const lowerY1 = lowerSlope * w2.index + lowerIntercept;
+    const lowerY2 = lowerSlope * lastCandleIndex + lowerIntercept;
+    
+    candidates.push({
+      label: `cage_${i}`,
       exists: true,
       upper_line: cage.upper,
       lower_line: cage.lower,
@@ -716,142 +678,22 @@ function generateCageCandidates(
         { date: startDate, value: lowerY1 },
         { date: lastCandleDate, value: lowerY2 }
       ],
-      start_index: startIdx,
+      start_index: w2.index,
       start_date: startDate,
-      anchor_index: anchorIdx,
+      anchor_index: w4.index,
       anchor_date: anchorDate,
       projected_to_index: lastCandleIndex,
       projected_to_date: lastCandleDate,
       break_index: breakInfo.break_index,
       break_date: breakInfo.first_break_date || null,
-      w2_idx: w2Idx,
-      w3_idx: w3Idx,
-      w4_idx: w4Idx,
+      w2_idx: w2.index,
+      w3_idx: w3.index,
+      w4_idx: w4.index,
       break_info: breakInfo
-    };
-  };
-
-  // Get all lows and highs
-  const lows = pivots.filter(p => p.type === 'low');
-  const highs = pivots.filter(p => p.type === 'high');
-
-  // Strategy 1: Use last 5 pivots (classic approach)
-  if (lows.length >= 2 && highs.length >= 1) {
-    const recentLows = lows.slice(-3);
-    const recentHighs = highs.slice(-2);
-    
-    for (let li = 0; li < recentLows.length - 1; li++) {
-      for (let hi = 0; hi < recentHighs.length; hi++) {
-        const w2 = recentLows[li];
-        const w4 = recentLows[li + 1];
-        const w3 = recentHighs[hi];
-        
-        // Validate order: w2 < w3 < w4 in time
-        if (w2.index < w3.index && w3.index < w4.index) {
-          const cage = buildImpulseCage24(
-            { index: w2.index, price: w2.price },
-            { index: w3.index, price: w3.price },
-            { index: w4.index, price: w4.price }
-          );
-          
-          if (cage) {
-            candidates.push(buildCandidate(
-              `cage_L${li}_H${hi}`,
-              cage,
-              w2.index,
-              w4.index,
-              w2.index,
-              w3.index,
-              w4.index
-            ));
-          }
-        }
-      }
-    }
+    });
   }
-
-  // Strategy 2: Most prominent pivots
-  if (pivots.length >= 5) {
-    const sortedByProminence = [...pivots].sort((a, b) => (b.prominence || 0) - (a.prominence || 0));
-    const topPivots = sortedByProminence.slice(0, 5).sort((a, b) => a.index - b.index);
-    
-    const prominentLows = topPivots.filter(p => p.type === 'low');
-    const prominentHighs = topPivots.filter(p => p.type === 'high');
-    
-    if (prominentLows.length >= 2 && prominentHighs.length >= 1) {
-      const w2 = prominentLows[0];
-      const w4 = prominentLows[prominentLows.length - 1];
-      const w3 = prominentHighs.find(h => h.index > w2.index && h.index < w4.index);
-      
-      if (w3) {
-        const cage = buildImpulseCage24(
-          { index: w2.index, price: w2.price },
-          { index: w3.index, price: w3.price },
-          { index: w4.index, price: w4.price }
-        );
-        
-        if (cage) {
-          candidates.push(buildCandidate(
-            "cage_prominent",
-            cage,
-            w2.index,
-            w4.index,
-            w2.index,
-            w3.index,
-            w4.index
-          ));
-        }
-      }
-    }
-  }
-
-  if (candidates.length === 0) {
-    return [{ 
-      label: "no_valid_cage",
-      exists: false, 
-      break_info: { broken: false, break_strength_pct: 0, break_strength_atr: 0, bars_since_break: 0 }
-    }];
-  }
-
+  
   return candidates;
-}
-
-function buildCorrectionCageACB(
-  aEnd: { index: number; price: number },
-  bEnd: { index: number; price: number },
-  cEnd: { index: number; price: number }
-): { upper: Line; lower: Line } | null {
-  if (!aEnd || !bEnd || !cEnd) return null;
-  
-  const acLine = buildLine(aEnd.index, aEnd.price, cEnd.index, cEnd.price);
-  const bLine = {
-    slope: acLine.slope,
-    intercept: bEnd.price - acLine.slope * bEnd.index
-  };
-  
-  if (bEnd.price > getLineValue(acLine, bEnd.index)) {
-    return { upper: bLine, lower: acLine };
-  } else {
-    return { upper: acLine, lower: bLine };
-  }
-}
-
-function buildDiagonalWedgeCage(
-  pivots: Pivot[]
-): { upper: Line; lower: Line; type: 'expanding' | 'contracting' } | null {
-  if (pivots.length < 4) return null;
-  
-  const highs = pivots.filter(p => p.type === 'high').slice(-2);
-  const lows = pivots.filter(p => p.type === 'low').slice(-2);
-  
-  if (highs.length < 2 || lows.length < 2) return null;
-  
-  const upperLine = buildLine(highs[0].index, highs[0].price, highs[1].index, highs[1].price);
-  const lowerLine = buildLine(lows[0].index, lows[0].price, lows[1].index, lows[1].price);
-  
-  const type = Math.abs(upperLine.slope) > Math.abs(lowerLine.slope) ? 'contracting' : 'expanding';
-  
-  return { upper: upperLine, lower: lowerLine, type };
 }
 
 function computeCageFeatures(
@@ -859,16 +701,13 @@ function computeCageFeatures(
   pivots: Pivot[],
   atr: number
 ): CageFeatures {
-  const lastCandleIndex = candles.length - 1;
-  const lastCandleDate = candles[lastCandleIndex]?.date || '';
-  
   const result: CageFeatures = {
     cage_2_4: {
       exists: false,
       broken: false,
       break_strength_pct: 0,
       break_strength_atr: 0,
-      bars_since_break: 0,
+      bars_since_break: 0
     },
     cage_2_4_candidates: [],
     cage_ACB: {
@@ -886,64 +725,75 @@ function computeCageFeatures(
     }
   };
 
-  // Generate multiple cage candidates for LLM to evaluate
-  result.cage_2_4_candidates = generateCageCandidates(candles, pivots, atr);
+  if (pivots.length < 4 || candles.length < 10) return result;
+
+  const candidates = generateCageCandidates(candles, pivots, atr);
+  result.cage_2_4_candidates = candidates;
   
-  // Select the best candidate (prioritize unbroken, then by prominence)
-  const validCandidates = result.cage_2_4_candidates.filter(c => c.exists);
-  if (validCandidates.length > 0) {
-    // Prefer unbroken cages, then most recent
-    const selected = validCandidates.find(c => !c.break_info.broken) || validCandidates[validCandidates.length - 1];
+  if (candidates.length > 0) {
+    const best = candidates.reduce((a, b) => 
+      (b.break_info.broken && b.break_info.break_strength_atr > a.break_info.break_strength_atr) ? b : a
+    );
     
     result.cage_2_4 = {
       exists: true,
-      broken: selected.break_info.broken,
-      break_direction: selected.break_info.break_direction,
-      break_strength_pct: selected.break_info.break_strength_pct,
-      break_strength_atr: selected.break_info.break_strength_atr,
-      bars_since_break: selected.break_info.bars_since_break,
-      first_break_date: selected.break_info.first_break_date,
-      selected_candidate: selected.label,
-      upper_line: selected.upper_line,
-      lower_line: selected.lower_line,
-      upper_points: selected.upper_points,
-      lower_points: selected.lower_points,
-      start_index: selected.start_index,
-      start_date: selected.start_date,
-      anchor_index: selected.anchor_index,
-      anchor_date: selected.anchor_date,
-      projected_to_index: selected.projected_to_index,
-      projected_to_date: selected.projected_to_date,
-      break_index: selected.break_index,
-      break_date: selected.break_date,
+      broken: best.break_info.broken,
+      break_direction: best.break_info.break_direction,
+      break_strength_pct: best.break_info.break_strength_pct,
+      break_strength_atr: best.break_info.break_strength_atr,
+      bars_since_break: best.break_info.bars_since_break,
+      first_break_date: best.break_info.first_break_date,
+      selected_candidate: best.label,
+      upper_line: best.upper_line,
+      lower_line: best.lower_line,
+      upper_points: best.upper_points,
+      lower_points: best.lower_points,
+      start_index: best.start_index,
+      start_date: best.start_date,
+      anchor_index: best.anchor_index,
+      anchor_date: best.anchor_date,
+      projected_to_index: best.projected_to_index,
+      projected_to_date: best.projected_to_date,
+      break_index: best.break_index,
+      break_date: best.break_date
     };
   }
 
-  // A-C-B cage for corrections
-  if (pivots.length >= 3) {
-    const lastThree = pivots.slice(-3);
-    if (lastThree[0].type !== lastThree[1].type && lastThree[1].type !== lastThree[2].type) {
-      const cageACB = buildCorrectionCageACB(
-        { index: lastThree[0].index, price: lastThree[0].price },
-        { index: lastThree[1].index, price: lastThree[1].price },
-        { index: lastThree[2].index, price: lastThree[2].price }
-      );
-      
-      if (cageACB) {
-        const startIdx = lastThree[0].index;
-        const anchorIdx = lastThree[2].index;
-        const startDate = candles[startIdx]?.date || '';
-        const anchorDate = candles[anchorIdx]?.date || '';
+  const highPivots = pivots.filter(p => p.type === 'high').slice(-4);
+  const lowPivots = pivots.filter(p => p.type === 'low').slice(-4);
+  
+  if (highPivots.length >= 2 && lowPivots.length >= 2) {
+    const A = lowPivots[0];
+    const C = highPivots[0];
+    const B = lowPivots.find(l => l.index > C.index) || lowPivots[1];
+    
+    if (A && C && B && A.index < C.index && C.index < B.index) {
+      const barsAtoB = B.index - A.index;
+      if (barsAtoB >= 5) {
+        const lowerSlope = (B.price - A.price) / barsAtoB;
+        const lowerIntercept = A.price - lowerSlope * A.index;
         
-        // Compute y values for rendering
-        const upperY1 = getLineValue(cageACB.upper, startIdx);
-        const upperY2 = getLineValue(cageACB.upper, lastCandleIndex);
-        const lowerY1 = getLineValue(cageACB.lower, startIdx);
-        const lowerY2 = getLineValue(cageACB.lower, lastCandleIndex);
+        const upperSlope = lowerSlope;
+        const upperIntercept = C.price - upperSlope * C.index;
+        
+        const cage = {
+          upper: { slope: upperSlope, intercept: upperIntercept },
+          lower: { slope: lowerSlope, intercept: lowerIntercept }
+        };
+        
+        const lastCandleIndex = candles.length - 1;
+        const lastCandleDate = candles[lastCandleIndex].date;
+        const startDate = candles[A.index].date;
+        const anchorDate = candles[B.index].date;
+        
+        const upperY1 = upperSlope * A.index + upperIntercept;
+        const upperY2 = upperSlope * lastCandleIndex + upperIntercept;
+        const lowerY1 = lowerSlope * A.index + lowerIntercept;
+        const lowerY2 = lowerSlope * lastCandleIndex + lowerIntercept;
         
         result.cage_ACB.exists = true;
-        result.cage_ACB.upper_line = cageACB.upper;
-        result.cage_ACB.lower_line = cageACB.lower;
+        result.cage_ACB.upper_line = cage.upper;
+        result.cage_ACB.lower_line = cage.lower;
         result.cage_ACB.upper_points = [
           { date: startDate, value: upperY1 },
           { date: lastCandleDate, value: upperY2 }
@@ -952,73 +802,98 @@ function computeCageFeatures(
           { date: startDate, value: lowerY1 },
           { date: lastCandleDate, value: lowerY2 }
         ];
-        result.cage_ACB.start_index = startIdx;
+        result.cage_ACB.start_index = A.index;
         result.cage_ACB.start_date = startDate;
-        result.cage_ACB.anchor_index = anchorIdx;
+        result.cage_ACB.anchor_index = B.index;
         result.cage_ACB.anchor_date = anchorDate;
         result.cage_ACB.projected_to_index = lastCandleIndex;
         result.cage_ACB.projected_to_date = lastCandleDate;
         
-        const breakResult = detectCageBreakWithATR(cageACB, candles, anchorIdx + 1, atr);
-        if (breakResult.broken) {
-          result.cage_ACB.broken_up = breakResult.break_direction === 'up';
-          result.cage_ACB.broken_down = breakResult.break_direction === 'down';
-          result.cage_ACB.break_strength_pct = breakResult.break_strength_pct;
-          result.cage_ACB.break_strength_atr = breakResult.break_strength_atr;
-          result.cage_ACB.break_index = breakResult.break_index;
-          result.cage_ACB.break_date = breakResult.first_break_date || null;
+        for (let i = B.index + 1; i < candles.length; i++) {
+          const projectedUpper = cage.upper.slope * i + cage.upper.intercept;
+          const projectedLower = cage.lower.slope * i + cage.lower.intercept;
+          const close = candles[i].close;
+          
+          if (close > projectedUpper && !result.cage_ACB.broken_up) {
+            result.cage_ACB.broken_up = true;
+            const distance = close - projectedUpper;
+            result.cage_ACB.break_strength_pct = (distance / projectedUpper) * 100;
+            result.cage_ACB.break_strength_atr = distance / atr;
+            result.cage_ACB.break_index = i;
+            result.cage_ACB.break_date = candles[i].date;
+          }
+          if (close < projectedLower && !result.cage_ACB.broken_down) {
+            result.cage_ACB.broken_down = true;
+            const distance = projectedLower - close;
+            result.cage_ACB.break_strength_pct = (distance / projectedLower) * 100;
+            result.cage_ACB.break_strength_atr = distance / atr;
+            result.cage_ACB.break_index = i;
+            result.cage_ACB.break_date = candles[i].date;
+          }
         }
       }
     }
   }
-  
-  // Wedge cage
-  const wedge = buildDiagonalWedgeCage(pivots.slice(-6));
-  if (wedge) {
-    result.wedge_cage.exists = true;
-    result.wedge_cage.wedge_type = wedge.type;
-    result.wedge_cage.upper_line = wedge.upper;
-    result.wedge_cage.lower_line = wedge.lower;
+
+  if (pivots.length >= 5) {
+    const recentPivots = pivots.slice(-5);
+    const highs = recentPivots.filter(p => p.type === 'high');
+    const lows = recentPivots.filter(p => p.type === 'low');
     
-    // Get start/anchor from the pivots used
-    const lastSixPivots = pivots.slice(-6);
-    const highs = lastSixPivots.filter(p => p.type === 'high').slice(-2);
-    const lows = lastSixPivots.filter(p => p.type === 'low').slice(-2);
     if (highs.length >= 2 && lows.length >= 2) {
-      const startIdx = Math.min(highs[0].index, lows[0].index);
-      const anchorIdx = Math.max(highs[1].index, lows[1].index);
-      const startDate = candles[startIdx]?.date || '';
-      const anchorDate = candles[anchorIdx]?.date || '';
+      const upperSlope = (highs[1].price - highs[0].price) / (highs[1].index - highs[0].index);
+      const lowerSlope = (lows[1].price - lows[0].price) / (lows[1].index - lows[0].index);
       
-      // Compute y values for rendering
-      const upperY1 = getLineValue(wedge.upper, startIdx);
-      const upperY2 = getLineValue(wedge.upper, lastCandleIndex);
-      const lowerY1 = getLineValue(wedge.lower, startIdx);
-      const lowerY2 = getLineValue(wedge.lower, lastCandleIndex);
+      const isConverging = upperSlope < 0 && lowerSlope > 0;
+      const isDiverging = upperSlope > 0 && lowerSlope < 0;
       
-      result.wedge_cage.upper_points = [
-        { date: startDate, value: upperY1 },
-        { date: lastCandleDate, value: upperY2 }
-      ];
-      result.wedge_cage.lower_points = [
-        { date: startDate, value: lowerY1 },
-        { date: lastCandleDate, value: lowerY2 }
-      ];
-      result.wedge_cage.start_index = startIdx;
-      result.wedge_cage.start_date = startDate;
-      result.wedge_cage.anchor_index = anchorIdx;
-      result.wedge_cage.anchor_date = anchorDate;
-      result.wedge_cage.projected_to_index = lastCandleIndex;
-      result.wedge_cage.projected_to_date = lastCandleDate;
-    }
-    
-    const breakResult = detectCageBreakWithATR({ upper: wedge.upper, lower: wedge.lower }, candles, pivots[pivots.length - 1].index + 1, atr);
-    result.wedge_cage.broken = breakResult.broken;
-    result.wedge_cage.break_strength_pct = breakResult.break_strength_pct;
-    result.wedge_cage.break_strength_atr = breakResult.break_strength_atr;
-    if (breakResult.broken) {
-      result.wedge_cage.break_index = breakResult.break_index;
-      result.wedge_cage.break_date = breakResult.first_break_date || null;
+      if (isConverging || isDiverging) {
+        const wedge = {
+          upper: { slope: upperSlope, intercept: highs[0].price - upperSlope * highs[0].index },
+          lower: { slope: lowerSlope, intercept: lows[0].price - lowerSlope * lows[0].index }
+        };
+        
+        result.wedge_cage.exists = true;
+        result.wedge_cage.wedge_type = isConverging ? 'contracting' : 'expanding';
+        result.wedge_cage.upper_line = wedge.upper;
+        result.wedge_cage.lower_line = wedge.lower;
+        
+        const startIdx = Math.min(highs[0].index, lows[0].index);
+        const anchorIdx = Math.max(highs[1].index, lows[1].index);
+        const lastCandleIndex = candles.length - 1;
+        const lastCandleDate = candles[lastCandleIndex].date;
+        const startDate = candles[startIdx].date;
+        const anchorDate = candles[anchorIdx].date;
+        
+        const upperY1 = wedge.upper.slope * startIdx + wedge.upper.intercept;
+        const upperY2 = wedge.upper.slope * lastCandleIndex + wedge.upper.intercept;
+        const lowerY1 = wedge.lower.slope * startIdx + wedge.lower.intercept;
+        const lowerY2 = wedge.lower.slope * lastCandleIndex + wedge.lower.intercept;
+        
+        result.wedge_cage.upper_points = [
+          { date: startDate, value: upperY1 },
+          { date: lastCandleDate, value: upperY2 }
+        ];
+        result.wedge_cage.lower_points = [
+          { date: startDate, value: lowerY1 },
+          { date: lastCandleDate, value: lowerY2 }
+        ];
+        result.wedge_cage.start_index = startIdx;
+        result.wedge_cage.start_date = startDate;
+        result.wedge_cage.anchor_index = anchorIdx;
+        result.wedge_cage.anchor_date = anchorDate;
+        result.wedge_cage.projected_to_index = lastCandleIndex;
+        result.wedge_cage.projected_to_date = lastCandleDate;
+        
+        const breakResult = detectCageBreakWithATR(wedge, candles, anchorIdx + 1, atr);
+        result.wedge_cage.broken = breakResult.broken;
+        result.wedge_cage.break_strength_pct = breakResult.break_strength_pct;
+        result.wedge_cage.break_strength_atr = breakResult.break_strength_atr;
+        if (breakResult.broken) {
+          result.wedge_cage.break_index = breakResult.break_index;
+          result.wedge_cage.break_date = breakResult.first_break_date || null;
+        }
+      }
     }
   }
 
@@ -1026,7 +901,182 @@ function computeCageFeatures(
 }
 
 // ============================================================================
-// SECTION 8: TOP-DOWN MULTI-TIMEFRAME ANALYSIS
+// SECTION 8: AUTO MAJOR DEGREE SELECTION
+// ============================================================================
+
+function determineMajorDegree(
+  weeklyCandles: Candle[],
+  historicalLow: { price: number; date: string }
+): MajorDegreeInfo {
+  const yearsOfData = weeklyCandles.length / 52;
+  
+  let degree: MajorDegreeInfo['degree'];
+  let timeframe_used: string;
+  let why_this_degree: string;
+  
+  if (yearsOfData >= 20) {
+    degree = 'Supercycle';
+    timeframe_used = '1wk';
+    why_this_degree = `${yearsOfData.toFixed(1)} years of history enables Supercycle degree analysis from the ${historicalLow.date} low.`;
+  } else if (yearsOfData >= 10) {
+    degree = 'Cycle';
+    timeframe_used = '1wk';
+    why_this_degree = `${yearsOfData.toFixed(1)} years of history supports Cycle degree analysis anchored at ${historicalLow.date}.`;
+  } else if (yearsOfData >= 3) {
+    degree = 'Primary';
+    timeframe_used = '1d';
+    why_this_degree = `${yearsOfData.toFixed(1)} years of data allows Primary degree analysis from ${historicalLow.date} low.`;
+  } else {
+    degree = 'Intermediate';
+    timeframe_used = '1d';
+    why_this_degree = `${yearsOfData.toFixed(1)} years of data limits analysis to Intermediate degree from ${historicalLow.date}.`;
+  }
+  
+  return {
+    degree,
+    timeframe_used,
+    from_historical_low: historicalLow,
+    why_this_degree,
+    years_of_data: yearsOfData
+  };
+}
+
+// ============================================================================
+// SECTION 9: DETERMINISTIC INVALIDATION CALCULATION
+// ============================================================================
+
+function computeDeterministicInvalidation(
+  pivots: Pivot[],
+  pattern: string,
+  currentWave: string,
+  historicalLow: { price: number; date: string },
+  lastPrice: number
+): number {
+  const lowPivots = pivots.filter(p => p.type === 'low').sort((a, b) => a.index - b.index);
+  const highPivots = pivots.filter(p => p.type === 'high').sort((a, b) => a.index - b.index);
+  
+  // Default to historical low as ultimate invalidation
+  let invalidation = historicalLow.price;
+  
+  const isImpulse = pattern?.toLowerCase().includes('impulse') || 
+                    pattern?.toLowerCase().includes('diagonal');
+  const isCorrection = pattern?.toLowerCase().includes('zigzag') || 
+                       pattern?.toLowerCase().includes('flat') || 
+                       pattern?.toLowerCase().includes('triangle');
+  
+  const waveNum = parseInt(currentWave, 10);
+  
+  if (isImpulse) {
+    if (waveNum === 5 || currentWave?.includes('5')) {
+      // Wave 5: Invalidation at wave 4 low
+      if (lowPivots.length >= 2) {
+        invalidation = lowPivots[lowPivots.length - 1].price;
+      }
+    } else if (waveNum === 4 || currentWave?.includes('4')) {
+      // Wave 4: Invalidation at wave 1 high (cannot enter wave 1 territory)
+      if (highPivots.length >= 1) {
+        invalidation = highPivots[0].price;
+      }
+    } else if (waveNum === 3 || currentWave?.includes('3')) {
+      // Wave 3: Invalidation at wave 2 low (below wave 1 start)
+      if (lowPivots.length >= 1) {
+        invalidation = lowPivots[0].price;
+      }
+    } else if (waveNum === 2 || currentWave?.includes('2')) {
+      // Wave 2: Cannot retrace 100% of wave 1
+      if (lowPivots.length >= 1) {
+        invalidation = lowPivots[0].price * 0.999; // Just below wave 1 start
+      }
+    }
+  } else if (isCorrection) {
+    if (currentWave?.includes('C') || currentWave?.includes('c')) {
+      // Wave C: Invalidation at wave B high (for bearish) or low (for bullish)
+      if (highPivots.length >= 1) {
+        const lastHigh = highPivots[highPivots.length - 1];
+        const lastLow = lowPivots.length > 0 ? lowPivots[lowPivots.length - 1] : null;
+        
+        // Determine correction direction
+        if (lastLow && lastLow.index > lastHigh.index) {
+          // Bearish correction
+          invalidation = lastHigh.price;
+        } else {
+          // Bullish correction
+          invalidation = lastLow?.price || historicalLow.price;
+        }
+      }
+    } else if (currentWave?.includes('B') || currentWave?.includes('b')) {
+      // Wave B: Invalidation depends on A
+      if (lowPivots.length >= 1) {
+        invalidation = lowPivots[lowPivots.length - 1].price;
+      }
+    }
+  }
+  
+  // Ensure invalidation is below current price for bullish counts
+  if (invalidation > lastPrice * 0.99) {
+    // Use the nearest significant low below price
+    const lowerPivots = lowPivots.filter(p => p.price < lastPrice);
+    if (lowerPivots.length > 0) {
+      invalidation = lowerPivots[lowerPivots.length - 1].price;
+    } else {
+      invalidation = historicalLow.price;
+    }
+  }
+  
+  return invalidation;
+}
+
+// ============================================================================
+// SECTION 10: KEY LEVELS NORMALIZATION
+// ============================================================================
+
+function normalizeKeyLevels(
+  keyLevels: any,
+  fallbackInvalidation: number
+): { support: number[]; resistance: number[]; fibonacci_targets: number[]; invalidation: number } {
+  const normalized = {
+    support: [] as number[],
+    resistance: [] as number[],
+    fibonacci_targets: [] as number[],
+    invalidation: fallbackInvalidation
+  };
+  
+  // Normalize support array
+  if (Array.isArray(keyLevels?.support)) {
+    normalized.support = keyLevels.support
+      .map((v: any) => typeof v === 'number' ? v : parseFloat(v))
+      .filter((v: number) => !isNaN(v) && isFinite(v));
+  }
+  
+  // Normalize resistance array
+  if (Array.isArray(keyLevels?.resistance)) {
+    normalized.resistance = keyLevels.resistance
+      .map((v: any) => typeof v === 'number' ? v : parseFloat(v))
+      .filter((v: number) => !isNaN(v) && isFinite(v));
+  }
+  
+  // Normalize fibonacci_targets array
+  if (Array.isArray(keyLevels?.fibonacci_targets)) {
+    normalized.fibonacci_targets = keyLevels.fibonacci_targets
+      .map((v: any) => typeof v === 'number' ? v : parseFloat(v))
+      .filter((v: number) => !isNaN(v) && isFinite(v));
+  }
+  
+  // Normalize invalidation (must be a number)
+  if (keyLevels?.invalidation !== undefined && keyLevels?.invalidation !== null) {
+    const parsed = typeof keyLevels.invalidation === 'number' 
+      ? keyLevels.invalidation 
+      : parseFloat(keyLevels.invalidation);
+    if (!isNaN(parsed) && isFinite(parsed)) {
+      normalized.invalidation = parsed;
+    }
+  }
+  
+  return normalized;
+}
+
+// ============================================================================
+// SECTION 11: TOP-DOWN MULTI-TIMEFRAME ANALYSIS
 // ============================================================================
 
 async function performTopDownAnalysis(
@@ -1057,7 +1107,7 @@ async function performTopDownAnalysis(
       microInterval = '15m';
       break;
     case '4h':
-      requestedInterval = '1h'; // Will aggregate
+      requestedInterval = '1h';
       mesoInterval = '1h';
       microInterval = '15m';
       break;
@@ -1111,7 +1161,6 @@ async function performTopDownAnalysis(
   const mesoATR = calculateATR(mesoCandles);
   const microATR = calculateATR(microCandles);
   
-  // Pivots computed on THEIR OWN timeframe candles
   const weeklyPivots = computeMultiScalePivots(weeklyCandles, weeklyATR, '1wk', 15, 8, 4);
   const dailyPivots = computeMultiScalePivots(dailyCandles, dailyATR, '1d', 10, 5, 2);
   const requestedPivots = computeMultiScalePivots(requestedCandles, requestedATR, requestedTimeframe, 8, 4, 2);
@@ -1147,18 +1196,23 @@ async function performTopDownAnalysis(
 }
 
 // ============================================================================
-// SECTION 9: LLM PROMPT WITH ANTI-GENERIC RULES
+// SECTION 12: LLM PROMPT WITH MAJOR DEGREE FIRST + ANTI-GENERIC RULES
 // ============================================================================
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(majorDegree: MajorDegreeInfo): string {
   return `You are GOX Agent, an expert quantitative analyst specialized in Elliott Wave Theory.
 
-## CORE ANALYSIS APPROACH: TOP-DOWN MULTI-DEGREE
+## CORE APPROACH: MAJOR DEGREE FIRST
+
+**CRITICAL**: This analysis MUST start from the historical low and work from the HIGHEST degree down.
+- Primary analysis degree: ${majorDegree.degree}
+- Historical low: $${majorDegree.from_historical_low.price.toFixed(4)} on ${majorDegree.from_historical_low.date}
+- Years of data: ${majorDegree.years_of_data.toFixed(1)}
 
 You MUST analyze in this order:
-1. MACRO (Supercycle/Cycle): Weekly pivots -> identify major structure
-2. MESO (Primary/Intermediate): Daily pivots -> refine within macro context
-3. MICRO (Minor/Minute): Intraday pivots -> current position within meso
+1. ${majorDegree.degree} (Highest) → identify the full wave structure from historical low
+2. Next lower degree → refine subdivisions
+3. Current actionable degree → immediate trading context
 
 ## HARD RULES (AUTOMATIC INVALIDATION IF VIOLATED)
 
@@ -1173,79 +1227,27 @@ You MUST analyze in this order:
 The backend provides MULTIPLE cage candidates (cage_2_4_candidates). 
 YOU MUST select the most appropriate cage based on your wave count.
 
-For each cage candidate you receive:
-- label: identifier
-- w2_idx, w3_idx, w4_idx: pivot indices used
-- break_info.break_strength_pct: percentage break
-- break_info.break_strength_atr: break in ATR units (USE THIS FOR SCORING)
-
-🟦 cage_2_4: Impulse channel scoring:
+🟦 cage_2_4: Impulse channel scoring (use break_strength_atr):
 - break_strength_atr >= 1.5: STRONG break (20 points)
 - break_strength_atr 1.0-1.5: MODERATE break (15 points)
 - break_strength_atr 0.5-1.0: WEAK break (10 points)
 - break_strength_atr < 0.5 or not broken: (5 points)
 
-🟩 cage_ACB: Correction channel
-🟥 wedge_cage: Diagonal/wedge pattern
-
-## SEGMENT FEATURES BY SCALE
-
-Backend provides segment_features separated by scale:
-- segment_features.macro: Features between macro pivots
-- segment_features.meso: Features between meso pivots  
-- segment_features.micro: Features between micro pivots
-
-Use the appropriate scale for each degree of analysis.
-
 ## 🚫 ANTI-GENERIC RULE (CRITICAL)
 
 You CANNOT conclude "wave 5 in formation" or "completing wave 5" UNLESS at least 3 of these 5 criteria are met:
 
-1. ✅ STRUCTURE: Waves 1-4 are clearly identifiable with proper internal structure
+1. ✅ STRUCTURE: Waves 1-4 clearly identifiable with proper internal structure
 2. ✅ HARD RULES: No violations of the 5 hard rules
 3. ✅ FIBONACCI: Wave 5 projection aligns with 0.618, 1.0, or 1.618 of wave 1
 4. ✅ MOMENTUM: RSI divergence present OR volume declining vs wave 3
-5. ✅ CAGE: At least one cage_2_4_candidate with break_strength_atr >= 0.5
+5. ✅ CAGE: At least one cage with break_strength_atr >= 0.5
 
-If <3 criteria met → You MUST output:
-{
-  "status": "inconclusive",
-  "primary_count": { "label": "Inconclusive - Multiple scenarios", ... },
-  "alternate_counts": [at least 2 alternates with equal weight, EACH with "waves" array]
-}
+If <3 criteria met → status must be "inconclusive"
 
 ## ALTERNATE COUNT WAVES REQUIREMENT (MANDATORY)
 
-For EVERY alternate count, you MUST include a "waves" array with the same format as primary_count.waves:
-- waves: [{ "wave": string, "date": string, "price": number, "degree": string }]
-- At minimum, include waves for the top 2 alternates
-- Each alternate's waves must be internally time-consistent (dates non-decreasing)
-- No duplicate sequential pivots with same date but different price
-
-## FORECAST DIRECTION NORMALIZATION
-
-All forecast.direction values MUST be one of: "bullish" | "bearish" | "neutral"
-Do NOT use: "up", "down", "sideways", or any other variations.
-
-## 📊 EVIDENCE SCORE CALCULATION (0-100)
-
-### 1. HARD_RULES (Pass/Fail → 20 points if pass, 0 if fail)
-Return both "passed" and "score" fields.
-
-### 2. FIBONACCI (0-20 points)
-Based on wave ratios matching Fibonacci.
-
-### 3. MOMENTUM_VOLUME (0-20 points)
-Based on volume patterns and RSI divergence.
-
-### 4. CAGES (0-20 points) - USE break_strength_atr
-- Best cage has break_strength_atr >= 1.5: 20
-- break_strength_atr 1.0-1.5: 15
-- break_strength_atr 0.5-1.0: 10
-- break_strength_atr < 0.5: 5
-
-### 5. MULTI_TF_CONSISTENCY (0-20 points)
-Alignment across macro/meso/micro.
+For EVERY alternate count, you MUST include a "waves" array with the same format as primary_count.waves.
 
 ## OUTPUT FORMAT
 
@@ -1262,16 +1264,16 @@ Alignment across macro/meso/micro.
     "multi_tf_consistency": { "score": 0-20, "details": "..." }
   },
   "multi_degree_analysis": {
-    "macro": { "degree": "Supercycle", "current_wave": "...", "structure": "..." },
-    "meso": { "degree": "Primary", "current_wave": "...", "within_macro": "..." },
-    "micro": { "degree": "Minor", "current_wave": "...", "within_meso": "..." }
+    "macro": { "degree": "${majorDegree.degree}", "current_wave": "...", "structure": "..." },
+    "meso": { "degree": "...", "current_wave": "...", "within_macro": "..." },
+    "micro": { "degree": "...", "current_wave": "...", "within_meso": "..." }
   },
-  "historical_low": { "date": "...", "price": ... },
+  "historical_low": { "date": "${majorDegree.from_historical_low.date}", "price": ${majorDegree.from_historical_low.price} },
   "primary_count": {
     "pattern": "impulse" | "diagonal" | "zigzag" | "flat" | "complex",
-    "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "Primary" }],
-    "current_wave": "5",
-    "next_expected": "A or new cycle",
+    "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "${majorDegree.degree}" }],
+    "current_wave": "...",
+    "next_expected": "...",
     "confidence": 0-100
   },
   "alternate_counts": [{
@@ -1283,32 +1285,26 @@ Alignment across macro/meso/micro.
     "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "..." }]
   }],
   "key_levels": {
-    "support": [...],
-    "resistance": [...],
-    "fibonacci_targets": [...],
+    "support": [number, number, ...],
+    "resistance": [number, number, ...],
+    "fibonacci_targets": [number, number, ...],
     "invalidation": number
   },
-  "cage_features": {
-    "cage_2_4": { "selected_candidate": "...", "exists": bool, "broken": bool, "break_direction": "up"|"down", "break_strength_pct": number, "break_strength_atr": number, "bars_since_break": number },
-    "cage_ACB": { ... },
-    "wedge_cage": { ... }
-  },
   "forecast": {
-    "short_term": { "direction": "...", "target": number, "timeframe": "..." },
-    "medium_term": { ... },
-    "long_term": { ... }
+    "short_term": { "direction": "bullish"|"bearish"|"neutral", "target": number, "timeframe": "..." },
+    "medium_term": { "direction": "...", "target": number, "timeframe": "..." },
+    "long_term": { "direction": "...", "target": number, "timeframe": "..." }
   },
   "key_uncertainties": ["..."],
   "what_would_confirm": ["..."],
   "summary": "..."
 }
 
-## TRAINING MODE
+## IMPORTANT NOTES
 
-If user_adjustments are provided:
-- Honor the forced wave labels
-- Re-analyze from those constraints
-- Note adjustments in commentary`;
+- ALL key_levels values MUST be numeric (not strings)
+- ALL forecast directions must be: "bullish", "bearish", or "neutral"
+- The invalidation level is MANDATORY and must be a valid number`;
 }
 
 function buildUserPrompt(
@@ -1321,6 +1317,7 @@ function buildUserPrompt(
   segmentFeatures: MultiScaleSegmentFeatures,
   cageFeatures: CageFeatures,
   historicalLow: { price: number; date: string },
+  majorDegree: MajorDegreeInfo,
   userAdjustments?: any
 ): string {
   const lastCandles = requestedData.candles.slice(-100);
@@ -1334,19 +1331,20 @@ function buildUserPrompt(
     ).join('\n');
 
   let prompt = `
-## SYMBOL: ${symbol} | REQUESTED TIMEFRAME: ${timeframe}
+## SYMBOL: ${symbol} | MAJOR DEGREE: ${majorDegree.degree} | AUTO-TIMEFRAME: ${majorDegree.timeframe_used}
 
-## HISTORICAL LOW
+## HISTORICAL LOW (ANALYSIS ANCHOR)
 Date: ${historicalLow.date} | Price: ${historicalLow.price.toFixed(4)}
+Years of Data: ${majorDegree.years_of_data.toFixed(1)}
 
-## MACRO DATA (Weekly - Supercycle)
+## MACRO DATA (Weekly - ${majorDegree.degree})
 Interval: ${macroData.interval} | ATR(14): ${macroData.atr.toFixed(4)}
 ### Macro Pivots:
 ${formatPivots(macroData.pivots.macro, 10)}
 ### Meso Pivots:
 ${formatPivots(macroData.pivots.meso, 10)}
 
-## MESO DATA (Daily - Primary)
+## MESO DATA (Daily)
 Interval: ${mesoData.interval} | ATR(14): ${mesoData.atr.toFixed(4)}
 ### Macro Pivots:
 ${formatPivots(mesoData.pivots.macro, 8)}
@@ -1361,15 +1359,6 @@ ATR(14): ${microData.atr.toFixed(4)}
 ${formatPivots(microData.pivots.meso, 10)}
 ### Micro Pivots:
 ${formatPivots(microData.pivots.micro, 15)}
-
-## REQUESTED TIMEFRAME DATA (${timeframe})
-ATR(14): ${requestedData.atr.toFixed(4)}
-### Macro Pivots:
-${formatPivots(requestedData.pivots.macro, 8)}
-### Meso Pivots:
-${formatPivots(requestedData.pivots.meso, 12)}
-### Micro Pivots:
-${formatPivots(requestedData.pivots.micro, 15)}
 
 ## SEGMENT FEATURES BY SCALE
 ### Macro Segments:
@@ -1401,36 +1390,33 @@ Total data points: ${requestedData.candles.length}
   if (userAdjustments) {
     prompt += `
 ## USER ADJUSTMENTS (Training Mode)
-The user has provided the following wave label adjustments. You MUST honor these constraints:
 ${JSON.stringify(userAdjustments, null, 2)}
-
-Re-analyze the structure based on these forced labels. Note any conflicts in commentary.
 `;
   }
 
   prompt += `
 ## INSTRUCTION
-1. Analyze TOP-DOWN: macro → meso → micro
-2. Use segment_features BY SCALE (macro for macro analysis, meso for meso, etc.)
-3. EVALUATE cage_2_4_candidates and SELECT the best one for your count
-4. Use break_strength_atr (not _pct) for CAGES scoring
-5. Check the anti-generic rule for wave 5 conclusions
-6. Return ONLY valid JSON matching the specified format
-7. All text in English
+1. Start from historical low at ${historicalLow.date} ($${historicalLow.price.toFixed(2)})
+2. Apply ${majorDegree.degree} degree analysis FIRST
+3. Use break_strength_atr for CAGES scoring
+4. Return ONLY valid JSON matching the specified format
+5. ALL key_levels values MUST be numbers (not strings)
 `;
 
   return prompt;
 }
 
 // ============================================================================
-// SECTION 10: LLM CALL
+// SECTION 13: LLM CALL WITH STATUS TRACKING
 // ============================================================================
 
 async function callLLM(
   systemPrompt: string,
   userPrompt: string,
   maxRetries = 2
-): Promise<any> {
+): Promise<{ report: any; llm_status: LLMStatus }> {
+  let lastStatus: LLMStatus = { ok: false, status_code: 0 };
+  
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       console.log(`LLM call attempt ${attempt + 1}, prompt length: ${userPrompt.length}`);
@@ -1452,17 +1438,68 @@ async function callLLM(
         }),
       });
 
+      const statusCode = response.status;
+      
+      // Parse retry-after header if present
+      const retryAfter = response.headers.get('Retry-After');
+      const retryAfterSeconds = retryAfter ? parseInt(retryAfter, 10) : undefined;
+
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`LLM API error (attempt ${attempt + 1}):`, response.status, errorText);
+        console.error(`LLM API error (attempt ${attempt + 1}):`, statusCode, errorText);
+        
+        if (statusCode === 429) {
+          lastStatus = {
+            ok: false,
+            status_code: 429,
+            error_type: 'rate_limit',
+            error_message: 'Rate limit exceeded. Please wait and try again.',
+            retry_after_seconds: retryAfterSeconds || 60
+          };
+          
+          if (attempt === maxRetries) {
+            return { report: null, llm_status: lastStatus };
+          }
+          
+          // Wait before retry
+          const waitTime = Math.pow(2, attempt) * 2000;
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
+        
+        if (statusCode === 402) {
+          lastStatus = {
+            ok: false,
+            status_code: 402,
+            error_type: 'payment_required',
+            error_message: 'LLM credits required. Please add credits to your Lovable AI workspace.'
+          };
+          return { report: null, llm_status: lastStatus };
+        }
+        
+        if (statusCode >= 500) {
+          lastStatus = {
+            ok: false,
+            status_code: statusCode,
+            error_type: 'server_error',
+            error_message: 'AI service temporarily unavailable. Please try again.'
+          };
+          
+          if (attempt === maxRetries) {
+            return { report: null, llm_status: lastStatus };
+          }
+          continue;
+        }
+        
+        lastStatus = {
+          ok: false,
+          status_code: statusCode,
+          error_type: 'server_error',
+          error_message: `AI service error: ${statusCode}`
+        };
         
         if (attempt === maxRetries) {
-          if (response.status === 429) {
-            throw new Error('Rate limit exceeded. Please wait and try again.');
-          } else if (response.status === 402) {
-            throw new Error('Payment required. Please add credits to your Lovable AI workspace.');
-          }
-          throw new Error(`AI service error: ${response.status}`);
+          return { report: null, llm_status: lastStatus };
         }
         continue;
       }
@@ -1479,7 +1516,15 @@ async function callLLM(
       
       if (jsonStart === -1 || jsonEnd === -1) {
         console.error('No valid JSON in response');
-        if (attempt === maxRetries) throw new Error('No valid JSON found');
+        lastStatus = {
+          ok: false,
+          status_code: 200,
+          error_type: 'parse_error',
+          error_message: 'Could not parse LLM response as JSON'
+        };
+        if (attempt === maxRetries) {
+          return { report: null, llm_status: lastStatus };
+        }
         continue;
       }
       
@@ -1507,7 +1552,7 @@ async function callLLM(
             if (d === 'up' || d === 'bull') return 'bullish';
             if (d === 'down' || d === 'bear') return 'bearish';
             if (d === 'sideways' || d === 'flat' || d === 'range') return 'neutral';
-            return d; // Already correct or unknown
+            return d;
           };
           
           if (report.forecast.short_term) {
@@ -1521,24 +1566,43 @@ async function callLLM(
           }
         }
         
-        return report;
+        lastStatus = {
+          ok: true,
+          status_code: 200
+        };
+        
+        return { report, llm_status: lastStatus };
       } catch (parseError) {
         console.error('JSON parse error:', parseError);
+        lastStatus = {
+          ok: false,
+          status_code: 200,
+          error_type: 'parse_error',
+          error_message: `Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Unknown'}`
+        };
         if (attempt === maxRetries) {
-          throw new Error(`Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Unknown'}`);
+          return { report: null, llm_status: lastStatus };
         }
       }
     } catch (error) {
       console.error(`Attempt ${attempt + 1} failed:`, error);
-      if (attempt === maxRetries) throw error;
+      lastStatus = {
+        ok: false,
+        status_code: 0,
+        error_type: 'server_error',
+        error_message: error instanceof Error ? error.message : 'Network error'
+      };
+      if (attempt === maxRetries) {
+        return { report: null, llm_status: lastStatus };
+      }
     }
   }
   
-  throw new Error('Failed to analyze Elliott Wave patterns');
+  return { report: null, llm_status: lastStatus };
 }
 
 // ============================================================================
-// SECTION 11: MAIN HTTP SERVER
+// SECTION 14: MAIN HTTP SERVER
 // ============================================================================
 
 serve(async (req) => {
@@ -1549,7 +1613,11 @@ serve(async (req) => {
   try {
     if (!lovableApiKey) {
       return new Response(
-        JSON.stringify({ error: 'Lovable AI key not configured' }),
+        JSON.stringify({ 
+          success: false,
+          error: 'Lovable AI key not configured',
+          llm_status: { ok: false, status_code: 500, error_type: 'server_error', error_message: 'API key not configured' }
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -1557,26 +1625,24 @@ serve(async (req) => {
     const body = await req.json();
     const { 
       symbol, 
-      timeframe = "1d", 
-      user_adjustments,
-      macro_threshold = 10.0,
-      meso_threshold = 5.0,
-      micro_threshold = 2.0
+      timeframe,
+      mode = 'auto_major_degree',
+      user_adjustments
     } = body;
 
     if (!symbol) {
       return new Response(
-        JSON.stringify({ error: 'Symbol is required' }),
+        JSON.stringify({ success: false, error: 'Symbol is required', api_version: API_VERSION }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const normalizedTimeframe = timeframe.toLowerCase();
-    console.log(`=== Analyzing ${symbol} on ${normalizedTimeframe} (top-down) [API v${API_VERSION}] ===`);
+    console.log(`=== Analyzing ${symbol} (mode: ${mode}) [API v${API_VERSION}] ===`);
 
-    let topDownData;
+    // Fetch weekly data first to determine major degree
+    let weeklyCandles: Candle[];
     try {
-      topDownData = await performTopDownAnalysis(symbol, normalizedTimeframe);
+      weeklyCandles = await fetchOHLCV(symbol, '1wk');
     } catch (error: any) {
       console.error('Data fetch error:', error);
       
@@ -1590,10 +1656,46 @@ serve(async (req) => {
         JSON.stringify({ 
           success: false,
           error: error.message || 'Symbol not found',
+          error_type: 'symbol_not_found',
           symbol,
           suggestions,
-          details: 'Verify the symbol exists on Yahoo Finance',
-          api_version: API_VERSION
+          api_version: API_VERSION,
+          llm_status: { ok: true, status_code: 200 }
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Calculate historical low from weekly data (full history)
+    let historicalLow = { price: Infinity, date: '' };
+    for (const candle of weeklyCandles) {
+      if (candle.low < historicalLow.price) {
+        historicalLow = { price: candle.low, date: candle.date };
+      }
+    }
+    console.log(`Historical low: ${historicalLow.price} on ${historicalLow.date}`);
+
+    // Determine major degree based on data availability
+    const majorDegree = determineMajorDegree(weeklyCandles, historicalLow);
+    console.log(`Major degree: ${majorDegree.degree} (${majorDegree.years_of_data.toFixed(1)} years)`);
+
+    // Auto-select timeframe based on mode
+    const effectiveTimeframe = mode === 'auto_major_degree' 
+      ? majorDegree.timeframe_used 
+      : (timeframe || '1d').toLowerCase();
+
+    let topDownData;
+    try {
+      topDownData = await performTopDownAnalysis(symbol, effectiveTimeframe);
+    } catch (error: any) {
+      console.error('Top-down analysis error:', error);
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: error.message || 'Failed to fetch timeframe data',
+          symbol,
+          api_version: API_VERSION,
+          llm_status: { ok: true, status_code: 200 }
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -1601,19 +1703,10 @@ serve(async (req) => {
 
     const { macro, meso, micro, requested } = topDownData;
 
-    // Calculate historical low from requested timeframe
-    let historicalLow = { price: Infinity, date: '' };
-    for (const candle of requested.candles) {
-      if (candle.low < historicalLow.price) {
-        historicalLow = { price: candle.low, date: candle.date };
-      }
-    }
-    console.log(`Historical low: ${historicalLow.price} on ${historicalLow.date}`);
-
     // Calculate RSI for segment features
     const rsiValues = calculateRSI(requested.candles);
 
-    // Calculate segment features BY SCALE from requested timeframe pivots
+    // Calculate segment features BY SCALE
     const segmentFeatures = calculateMultiScaleSegmentFeatures(
       requested.candles, 
       requested.pivots, 
@@ -1621,18 +1714,18 @@ serve(async (req) => {
     );
     console.log(`Segment features: macro=${segmentFeatures.macro.length}, meso=${segmentFeatures.meso.length}, micro=${segmentFeatures.micro.length}`);
 
-    // Merge all pivots for cage calculation (use meso scale for most balanced view)
+    // Merge all pivots for cage calculation
     const allPivots = [...requested.pivots.meso].sort((a, b) => a.index - b.index);
     
-    // Calculate cage features with ATR-based break strength
+    // Calculate cage features
     const cageFeatures = computeCageFeatures(requested.candles, allPivots, requested.atr);
-    console.log(`Cage candidates: ${cageFeatures.cage_2_4_candidates.length}, ACB=${cageFeatures.cage_ACB.exists}, wedge=${cageFeatures.wedge_cage.exists}`);
+    console.log(`Cage candidates: ${cageFeatures.cage_2_4_candidates.length}`);
 
     // Build prompts and call LLM
-    const systemPrompt = buildSystemPrompt();
+    const systemPrompt = buildSystemPrompt(majorDegree);
     const userPrompt = buildUserPrompt(
       symbol,
-      normalizedTimeframe,
+      effectiveTimeframe,
       macro,
       meso,
       micro,
@@ -1640,21 +1733,61 @@ serve(async (req) => {
       segmentFeatures,
       cageFeatures,
       historicalLow,
+      majorDegree,
       user_adjustments
     );
 
     console.log(`User prompt length: ${userPrompt.length} chars`);
 
-    const report = await callLLM(systemPrompt, userPrompt);
+    const { report, llm_status } = await callLLM(systemPrompt, userPrompt);
 
-    // Return complete response with api_version
+    // Handle LLM failure
+    if (!report) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: llm_status.error_message || 'LLM analysis failed',
+          error_type: llm_status.error_type,
+          retry_after_seconds: llm_status.retry_after_seconds,
+          symbol,
+          api_version: API_VERSION,
+          llm_status
+        }),
+        { 
+          status: llm_status.status_code === 429 ? 429 : 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    // Compute deterministic invalidation as fallback
+    const lastPrice = requested.candles[requested.candles.length - 1].close;
+    const fallbackInvalidation = computeDeterministicInvalidation(
+      allPivots,
+      report.primary_count?.pattern,
+      report.primary_count?.current_wave,
+      historicalLow,
+      lastPrice
+    );
+
+    // Normalize key levels
+    const normalizedKeyLevels = normalizeKeyLevels(report.key_levels, fallbackInvalidation);
+    report.key_levels = normalizedKeyLevels;
+
+    // Include cage features in the analysis report
+    report.cage_features = cageFeatures;
+
+    // Return complete response
     return new Response(
       JSON.stringify({ 
         success: true,
         api_version: API_VERSION,
         symbol: symbol.toUpperCase(),
-        timeframe: normalizedTimeframe,
+        timeframe: effectiveTimeframe,
+        mode,
+        major_degree: majorDegree,
         analysis: report,
+        llm_status,
         computed_features: {
           timeframes_used: {
             macro: macro.interval,
@@ -1695,7 +1828,7 @@ serve(async (req) => {
         },
         historical_low: historicalLow,
         dataPoints: requested.candles.length,
-        lastPrice: requested.candles[requested.candles.length - 1].close,
+        lastPrice,
         timestamp: new Date().toISOString(),
         training_mode: !!user_adjustments
       }),
@@ -1706,9 +1839,16 @@ serve(async (req) => {
     console.error('Error in analyze-elliott-wave:', error);
     return new Response(
       JSON.stringify({ 
+        success: false,
         error: error instanceof Error ? error.message : 'Internal server error',
-        details: 'Failed to analyze Elliott Wave patterns',
-        api_version: API_VERSION
+        error_type: 'server_error',
+        api_version: API_VERSION,
+        llm_status: { 
+          ok: false, 
+          status_code: 500, 
+          error_type: 'server_error',
+          error_message: error instanceof Error ? error.message : 'Internal server error'
+        }
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
