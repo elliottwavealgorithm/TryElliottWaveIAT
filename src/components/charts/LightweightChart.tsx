@@ -222,6 +222,7 @@ export function LightweightChart({
 }: LightweightChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const chartRemovedRef = useRef(false); // Track if chart was removed
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const waveLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const cageSeriesRefs = useRef<ISeriesApi<'Line'>[]>([]);
@@ -316,6 +317,9 @@ export function LightweightChart({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    // Reset removed flag on mount
+    chartRemovedRef.current = false;
+
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
@@ -368,7 +372,7 @@ export function LightweightChart({
     setIsReady(true);
 
     const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
+      if (chartContainerRef.current && chartRef.current && !chartRemovedRef.current) {
         chartRef.current.applyOptions({
           width: chartContainerRef.current.clientWidth,
         });
@@ -379,6 +383,8 @@ export function LightweightChart({
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      chartRemovedRef.current = true; // Mark as removed BEFORE removing
+      setIsReady(false);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -416,14 +422,17 @@ export function LightweightChart({
 
   // Add wave lines with BusinessDay format
   useEffect(() => {
-    if (!candleSeriesRef.current || !isReady || !chartRef.current) return;
+    // Guard against stale chart reference
+    if (!candleSeriesRef.current || !isReady || !chartRef.current || chartRemovedRef.current) return;
 
     const chart = chartRef.current;
 
     // Clear previous wave line series
     if (waveLineSeriesRef.current) {
       try {
-        chart.removeSeries(waveLineSeriesRef.current);
+        if (!chartRemovedRef.current) {
+          chart.removeSeries(waveLineSeriesRef.current);
+        }
       } catch (e) {}
       waveLineSeriesRef.current = null;
     }
@@ -441,6 +450,9 @@ export function LightweightChart({
       console.warn('[LightweightChart] Less than 2 valid wave points within candle range');
       return;
     }
+
+    // Guard again before adding series
+    if (chartRemovedRef.current || !chartRef.current) return;
 
     try {
       const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
@@ -498,14 +510,17 @@ export function LightweightChart({
 
   // Draw cage lines with BusinessDay format
   useEffect(() => {
-    if (!chartRef.current || !isReady) return;
+    // Guard against stale chart reference
+    if (!chartRef.current || !isReady || chartRemovedRef.current) return;
 
     const chart = chartRef.current;
 
     // Clear previous cage lines
     cageSeriesRefs.current.forEach(series => {
       try {
-        chart.removeSeries(series);
+        if (!chartRemovedRef.current) {
+          chart.removeSeries(series);
+        }
       } catch (e) {}
     });
     cageSeriesRefs.current = [];
@@ -517,7 +532,10 @@ export function LightweightChart({
 
     const cageFeatures = analysis.cage_features;
 
-    const createLineSeries = (color: string, isBroken: boolean): any => {
+    const createLineSeries = (color: string, isBroken: boolean): any | null => {
+      // Guard before creating series
+      if (chartRemovedRef.current || !chartRef.current) return null;
+      
       if (typeof (chart as any).addLineSeries === 'function') {
         return (chart as any).addLineSeries({
           color: isBroken ? `${color}60` : color,
@@ -556,6 +574,8 @@ export function LightweightChart({
       
       try {
         const lowerSeries = createLineSeries(color, isBroken);
+        if (!lowerSeries) return; // Guard if chart was removed
+        
         lowerSeries.setData([
           { time: toBusinessDay(lowerPoints[0].date) as Time, value: lowerPoints[0].value },
           { time: toBusinessDay(lowerPoints[1].date) as Time, value: lowerPoints[1].value },
@@ -563,6 +583,8 @@ export function LightweightChart({
         cageSeriesRefs.current.push(lowerSeries);
         
         const upperSeries = createLineSeries(color, isBroken);
+        if (!upperSeries) return; // Guard if chart was removed
+        
         upperSeries.setData([
           { time: toBusinessDay(upperPoints[0].date) as Time, value: upperPoints[0].value },
           { time: toBusinessDay(upperPoints[1].date) as Time, value: upperPoints[1].value },
