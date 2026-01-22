@@ -10,7 +10,16 @@ import {
   CandlestickSeries,
   LineSeries,
 } from 'lightweight-charts';
-import { Candle, ElliottAnalysisResult, WavePoint } from '@/types/analysis';
+import { 
+  Candle, 
+  ElliottAnalysisResult, 
+  WavePoint, 
+  MultiLayerAnalysis, 
+  WaveLayer,
+  WaveDegree,
+  formatWaveLabelByDegree,
+  DEGREE_ABBREV_MAP,
+} from '@/types/analysis';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TrendingUp, Grid3X3, Target, AlertTriangle } from 'lucide-react';
@@ -36,6 +45,7 @@ function safeAddLine(chart: IChartApi, options: Record<string, unknown>): ISerie
   // v5 API: addSeries(LineSeries, options)
   return (chart as any).addSeries(LineSeries, options);
 }
+
 // ============================================================================
 // TIME FORMAT HELPER - Convert YYYY-MM-DD to BusinessDay
 // ============================================================================
@@ -80,7 +90,10 @@ interface ChartWarning {
 interface LightweightChartProps {
   candles: Candle[];
   symbol: string;
+  // Support both legacy single analysis and new multi-layer
   analysis?: ElliottAnalysisResult | null;
+  multiLayer?: MultiLayerAnalysis | null;
+  activeLayerIds?: Set<string>;
   selectedAlternateIndex?: number | null;
   height?: number;
   overlayToggles?: ChartOverlayToggles;
@@ -119,6 +132,16 @@ const WAVE_LABEL_COLORS: Record<string, string> = {
   'W': '#84cc16',
   'X': '#64748b',
   'Y': '#0ea5e9',
+};
+
+// Degree-specific line colors for multi-layer
+const DEGREE_LINE_COLORS: Record<WaveDegree, string> = {
+  'Supercycle': '#8b5cf6',
+  'Cycle': '#3b82f6',
+  'Primary': '#22c55e',
+  'Intermediate': '#f59e0b',
+  'Minor': '#06b6d4',
+  'Minute': '#ec4899',
 };
 
 const DEGREE_ABBREV: Record<string, string> = {
@@ -255,6 +278,8 @@ export function LightweightChart({
   candles, 
   symbol, 
   analysis,
+  multiLayer,
+  activeLayerIds,
   selectedAlternateIndex = null,
   height = 500,
   overlayToggles: externalToggles,
@@ -262,16 +287,23 @@ export function LightweightChart({
 }: LightweightChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const chartRemovedRef = useRef(false); // Track if chart was removed
+  const chartRemovedRef = useRef(false);
   const chartInstanceIdRef = useRef(0);
   const currentChartIdRef = useRef(0);
   const candleSeriesChartIdRef = useRef(0);
 
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  // Multi-layer series registry
+  const waveSeriesByLayerRef = useRef<Map<string, SeriesWithChartId<ISeriesApi<'Line'>>>>(new Map());
+  const cageSeriesByLayerRef = useRef<Map<string, { upper: SeriesWithChartId<ISeriesApi<'Line'>>; lower: SeriesWithChartId<ISeriesApi<'Line'>> }>>(new Map());
+  const levelLinesByLayerRef = useRef<Map<string, any[]>>(new Map());
+  
+  // Legacy refs for backward compatibility
   const waveLineSeriesRef = useRef<SeriesWithChartId<ISeriesApi<'Line'>> | null>(null);
   const cageSeriesRefs = useRef<Array<SeriesWithChartId<ISeriesApi<'Line'>>>>([]);
   const cageSeriesByKeyRef = useRef<Record<string, SeriesWithChartId<ISeriesApi<'Line'>>>>({});
   const levelLinesRef = useRef<any[]>([]);
+  
   const [isReady, setIsReady] = useState(false);
   const [warnings, setWarnings] = useState<ChartWarning[]>([]);
   
@@ -301,18 +333,42 @@ export function LightweightChart({
     };
   }, [candles]);
 
-  // Get active wave points (primary or alternate)
+  // Get active layers from multiLayer or fallback to single analysis
+  const activeLayers: WaveLayer[] = useMemo(() => {
+    if (multiLayer && activeLayerIds && activeLayerIds.size > 0) {
+      return multiLayer.layers.filter(l => activeLayerIds.has(l.layer_id));
+    }
+    // Fallback: convert single analysis to a pseudo-layer
+    if (analysis) {
+      return [{
+        layer_id: 'legacy',
+        degree: 'Primary' as WaveDegree,
+        timeframe: analysis.timeframe,
+        status: analysis.status,
+        waves: analysis.primary_count?.waves || [],
+        key_levels: analysis.key_levels,
+        cage_features: analysis.cage_features,
+        summary: analysis.summary,
+        analyzed_at: new Date().toISOString(),
+        source: 'llm',
+      }];
+    }
+    return [];
+  }, [multiLayer, activeLayerIds, analysis]);
+
+  // Get wave points from all active layers (for legacy compatibility)
   const activeWavePoints: WavePoint[] = useMemo(() => {
-    if (!analysis) return [];
+    if (activeLayers.length === 0) return [];
     
-    if (selectedAlternateIndex !== null && 
-        analysis.alternate_counts[selectedAlternateIndex]?.waves &&
-        analysis.alternate_counts[selectedAlternateIndex].waves!.length > 0) {
+    // For alternate selection with legacy analysis
+    if (analysis && selectedAlternateIndex !== null && 
+        analysis.alternate_counts[selectedAlternateIndex]?.waves?.length > 0) {
       return analysis.alternate_counts[selectedAlternateIndex].waves!;
     }
     
-    return analysis.primary_count?.waves || [];
-  }, [analysis, selectedAlternateIndex]);
+    // Combine waves from all active layers
+    return activeLayers.flatMap(l => l.waves);
+  }, [activeLayers, analysis, selectedAlternateIndex]);
 
   // Normalize and validate wave labels
   const normalizedActiveWavePoints = useMemo(() => {

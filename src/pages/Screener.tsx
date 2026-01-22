@@ -4,125 +4,46 @@ import { ScreenerPanel } from '@/components/screener/ScreenerPanel';
 import { AnalysisPanel } from '@/components/analysis/AnalysisPanel';
 import { LightweightChart } from '@/components/charts/LightweightChart';
 import { WaveAdjustmentDialog } from '@/components/charts/WaveAdjustmentDialog';
-import { supabase } from '@/integrations/supabase/client';
-import { ElliottAnalysisResult, FundamentalsSnapshot, Candle, Pivot, WaveAdjustment } from '@/types/analysis';
+import { DegreeLayerChips } from '@/components/charts/DegreeLayerChips';
+import { LLMStatusIndicator } from '@/components/ui/llm-status-indicator';
+import { AnalysisChat } from '@/components/elliott/AnalysisChat';
+import { useMultiLayerAnalysis } from '@/hooks/useMultiLayerAnalysis';
+import { WaveAdjustment, ElliottAnalysisResult } from '@/types/analysis';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Settings2, ChevronLeft, AlertTriangle, CreditCard, Clock, TrendingUp, AlertCircle } from 'lucide-react';
+import { Settings2, ChevronLeft, AlertCircle, TrendingUp, MessageSquare } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-interface LLMStatus {
-  ok: boolean;
-  status_code: number;
-  error_type?: string;
-  error_message?: string;
-  retry_after_seconds?: number;
-}
-
-interface MajorDegree {
-  degree: string;
-  timeframe_used: string;
-  years_of_data: number;
-  why_this_degree: string;
-}
 
 export default function Screener() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('');
-  const [analysis, setAnalysis] = useState<ElliottAnalysisResult | null>(null);
-  const [fundamentals, setFundamentals] = useState<FundamentalsSnapshot | null>(null);
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [pivots, setPivots] = useState<Pivot[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [selectedAlternateIndex, setSelectedAlternateIndex] = useState<number | null>(null);
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [isAdjusting, setIsAdjusting] = useState(false);
-  const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
-  const [majorDegree, setMajorDegree] = useState<MajorDegree | null>(null);
-  const [analysisTimeframe, setAnalysisTimeframe] = useState<string>('');
-  const [isStructureOnly, setIsStructureOnly] = useState(false);
+  const [showChat, setShowChat] = useState(false);
 
-  const analyzeSymbol = useCallback(async (symbol: string, userAdjustments?: WaveAdjustment[]) => {
+  const {
+    multiLayer,
+    activeLayerIds,
+    candles,
+    pivots,
+    fundamentals,
+    isLoading,
+    llmStatusState,
+    lastSuccessfulCall,
+    retryAfterSeconds,
+    isStructureOnly,
+    analyzeSymbol,
+    addSmallerDegreeLayer,
+    toggleLayer,
+  } = useMultiLayerAnalysis();
+
+  const handleSymbolSelect = useCallback(async (symbol: string) => {
     setSelectedSymbol(symbol);
-    setIsLoading(true);
     setSelectedAlternateIndex(null);
-    setLlmStatus(null);
-    setIsStructureOnly(false);
-    
-    try {
-      // Run Elliott Wave analysis with auto timeframe mode
-      // Backend returns candles as single source of truth
-      const { data, error } = await supabase.functions.invoke('analyze-elliott-wave', {
-        body: { 
-          symbol, 
-          timeframe: 'auto',
-          mode: 'auto_major_degree',
-          user_adjustments: userAdjustments ? {
-            force_wave_labels: userAdjustments,
-            notes: 'User manual adjustment'
-          } : undefined
-        }
-      });
-
-      if (error) throw error;
-
-      // Handle LLM status
-      if (data?.llm_status) {
-        setLlmStatus(data.llm_status);
-      }
-
-      // Check for structure-only fallback
-      if (data?.structure_only) {
-        setIsStructureOnly(true);
-        toast.warning('LLM unavailable. Showing structure-only result.');
-      }
-
-      // Set candles from response (single source of truth)
-      if (data?.candles) {
-        setCandles(data.candles);
-      }
-
-      // Set pivots from response
-      if (data?.pivots) {
-        setPivots(data.pivots);
-      }
-
-      // Set analysis timeframe
-      if (data?.analysis_timeframe_selected) {
-        setAnalysisTimeframe(data.analysis_timeframe_selected);
-      }
-
-      // Set major degree
-      if (data?.major_degree) {
-        setMajorDegree(data.major_degree);
-      }
-
-      // Set analysis
-      if (data?.analysis) {
-        setAnalysis(data.analysis);
-        setFundamentals(data.fundamentals || null);
-        
-        if (!data.structure_only) {
-          toast.success(`${data.major_degree?.degree || 'Analysis'} complete for ${symbol}`);
-        }
-      }
-
-      // Handle LLM errors with toasts
-      if (data?.llm_status && !data.llm_status.ok && !data.structure_only) {
-        if (data.llm_status.error_type === 'rate_limit') {
-          toast.error(`Rate limited — try again in ${data.llm_status.retry_after_seconds || 60}s`);
-        } else if (data.llm_status.error_type === 'payment_required') {
-          toast.error('LLM credits required — add credits in Lovable workspace');
-        }
-      }
-
-    } catch (error) {
-      console.error('Analysis error:', error);
-      toast.error('Failed to analyze symbol');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    setShowChat(false);
+    await analyzeSymbol(symbol);
+  }, [analyzeSymbol]);
 
   const handleSelectAlternate = useCallback((index: number | null) => {
     setSelectedAlternateIndex(index);
@@ -143,6 +64,52 @@ export default function Screener() {
       setIsAdjusting(false);
     }
   }, [selectedSymbol, analyzeSymbol]);
+
+  // Get the base layer's analysis for display in AnalysisPanel
+  const baseLayer = multiLayer?.layers[0];
+  const displayAnalysis: ElliottAnalysisResult | null = baseLayer ? {
+    symbol: multiLayer?.symbol || '',
+    timeframe: baseLayer.timeframe,
+    status: baseLayer.status === 'structure_only' ? 'inconclusive' : baseLayer.status,
+    evidence_score: 0,
+    evidence_checklist: {
+      hard_rules: { passed: true, score: 0, details: '' },
+      fibonacci: { score: 0, details: '' },
+      momentum_volume: { score: 0, details: '' },
+      cages: { score: 0, details: '' },
+      multi_tf_consistency: { score: 0, details: '' },
+    },
+    primary_count: {
+      pattern: 'impulse',
+      waves: baseLayer.waves,
+      current_wave: '',
+      next_expected: '',
+      confidence: 0,
+    },
+    alternate_counts: [],
+    key_levels: baseLayer.key_levels || { support: [], resistance: [], fibonacci_targets: [], invalidation: 0 },
+    cage_features: baseLayer.cage_features || {
+      cage_2_4: { exists: false, broken: false, break_strength: 0, bars_since_break: 0 },
+      cage_ACB: { exists: false, broken_up: false, broken_down: false, break_strength: 0 },
+      wedge_cage: { exists: false, broken: false, break_strength: 0 },
+    },
+    forecast: {
+      short_term: { direction: 'neutral', target: 0, timeframe: '' },
+      medium_term: { direction: 'neutral', target: 0, timeframe: '' },
+      long_term: { direction: 'neutral', target: 0, timeframe: '' },
+    },
+    key_uncertainties: [],
+    what_would_confirm: [],
+    summary: baseLayer.summary || '',
+  } : null;
+
+  // Handle chat layer command
+  const handleChatAnalysisUpdate = useCallback((newAnalysis: any) => {
+    // If chat requests a smaller degree, trigger the layer addition
+    if (newAnalysis?.addSmallerDegree) {
+      addSmallerDegreeLayer();
+    }
+  }, [addSmallerDegreeLayer]);
 
   const formatTimeframe = (tf: string) => {
     const map: Record<string, string> = {
@@ -169,32 +136,9 @@ export default function Screener() {
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
               <span>LLM unavailable (rate limited). Showing structure-only result with chart data.</span>
-              {llmStatus?.retry_after_seconds && (
+              {retryAfterSeconds && (
                 <span className="text-xs opacity-75">
-                  (retry in {llmStatus.retry_after_seconds}s)
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* LLM Status Banner (only if not structure-only) */}
-        {!isStructureOnly && llmStatus && !llmStatus.ok && (
-          <div className={`px-4 py-2 flex items-center justify-between text-sm ${
-            llmStatus.error_type === 'rate_limit' 
-              ? 'bg-amber-500/20 text-amber-300' 
-              : 'bg-red-500/20 text-red-300'
-          }`}>
-            <div className="flex items-center gap-2">
-              {llmStatus.error_type === 'payment_required' ? (
-                <CreditCard className="h-4 w-4" />
-              ) : (
-                <AlertTriangle className="h-4 w-4" />
-              )}
-              <span>{llmStatus.error_message}</span>
-              {llmStatus.retry_after_seconds && (
-                <span className="text-xs opacity-75">
-                  (retry in {llmStatus.retry_after_seconds}s)
+                  (retry in {retryAfterSeconds}s)
                 </span>
               )}
             </div>
@@ -213,26 +157,30 @@ export default function Screener() {
               </Link>
               <h1 className="text-xl font-bold">GOX Screener</h1>
               
-              {/* Read-only Status Pills */}
-              {analysisTimeframe && (
-                <Badge variant="outline" className="text-xs gap-1">
-                  <Clock className="h-3 w-3" />
-                  {formatTimeframe(analysisTimeframe)}
-                </Badge>
-              )}
-              {majorDegree && (
+              {/* LLM Status Indicator */}
+              <LLMStatusIndicator 
+                status={llmStatusState}
+                lastSuccessfulCall={lastSuccessfulCall}
+                retryAfterSeconds={retryAfterSeconds}
+              />
+              
+              {/* Degree Badge */}
+              {baseLayer && (
                 <Badge variant="outline" className="text-xs gap-1">
                   <TrendingUp className="h-3 w-3" />
-                  {majorDegree.degree}
+                  {baseLayer.degree} • {formatTimeframe(baseLayer.timeframe)}
                 </Badge>
               )}
-              {analysis?.key_levels?.invalidation && (
+              
+              {/* Invalidation Badge */}
+              {baseLayer?.key_levels?.invalidation && (
                 <Badge variant="secondary" className="text-xs gap-1 bg-amber-500/20 text-amber-400 border-amber-500/30">
-                  INV: ${analysis.key_levels.invalidation.toFixed(2)}
+                  INV: ${baseLayer.key_levels.invalidation.toFixed(2)}
                 </Badge>
               )}
             </div>
-            <span className="text-xs text-muted-foreground">Auto Timeframe Mode</span>
+            
+            <span className="text-xs text-muted-foreground">Auto Degree Mode</span>
           </div>
         </header>
 
@@ -241,7 +189,7 @@ export default function Screener() {
           {/* Left: Screener */}
           <div className="w-80 border-r border-border/50 p-4 overflow-y-auto">
             <ScreenerPanel 
-              onSymbolSelect={(s) => analyzeSymbol(s)}
+              onSymbolSelect={handleSymbolSelect}
               selectedSymbol={selectedSymbol}
             />
           </div>
@@ -251,39 +199,56 @@ export default function Screener() {
             {/* Chart Toolbar */}
             {selectedSymbol && (
               <div className="flex items-center justify-between px-4 py-2 border-b border-border/50">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <span className="text-sm font-medium">{selectedSymbol}</span>
-                  {analysis?.primary_count?.pattern && (
-                    <span className="text-xs text-muted-foreground">
-                      {analysis.primary_count.pattern}
-                    </span>
+                  
+                  {/* Layer Chips */}
+                  {multiLayer && (
+                    <DegreeLayerChips
+                      layers={multiLayer.layers}
+                      activeLayerIds={activeLayerIds}
+                      onToggleLayer={toggleLayer}
+                    />
                   )}
+                  
                   {isStructureOnly && (
                     <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-400 border-amber-500/30">
                       Structure Only
                     </Badge>
                   )}
                 </div>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  onClick={() => setAdjustmentDialogOpen(true)}
-                  disabled={pivots.length === 0 || isLoading}
-                >
-                  <Settings2 className="h-4 w-4 mr-2" />
-                  Adjust Count
-                </Button>
+                
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowChat(!showChat)}
+                  >
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    {showChat ? 'Hide Chat' : 'Chat'}
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => setAdjustmentDialogOpen(true)}
+                    disabled={pivots.length === 0 || isLoading}
+                  >
+                    <Settings2 className="h-4 w-4 mr-2" />
+                    Adjust
+                  </Button>
+                </div>
               </div>
             )}
             
-            {/* Chart Area - LightweightChart is the PRIMARY analysis chart */}
+            {/* Chart Area */}
             <div className="flex-1 p-2">
               {selectedSymbol ? (
                 candles.length > 0 ? (
                   <LightweightChart 
                     candles={candles}
                     symbol={selectedSymbol}
-                    analysis={analysis}
+                    multiLayer={multiLayer}
+                    activeLayerIds={activeLayerIds}
                     selectedAlternateIndex={selectedAlternateIndex}
                     height={Math.max(420, window.innerHeight - 200)}
                   />
@@ -307,16 +272,32 @@ export default function Screener() {
             </div>
           </div>
 
-          {/* Right: Analysis Panel */}
-          <div className="w-96 border-l border-border/50 p-4 overflow-hidden">
-            <AnalysisPanel 
-              analysis={analysis}
-              fundamentals={fundamentals}
-              isLoading={isLoading || isAdjusting}
-              onRefresh={() => selectedSymbol && analyzeSymbol(selectedSymbol)}
-              onSelectAlternate={handleSelectAlternate}
-              selectedAlternateIndex={selectedAlternateIndex}
-            />
+          {/* Right: Analysis Panel + Chat */}
+          <div className="w-96 border-l border-border/50 flex flex-col overflow-hidden">
+            {/* Analysis Panel */}
+            <div className={`${showChat ? 'h-1/2' : 'flex-1'} p-4 overflow-y-auto`}>
+              <AnalysisPanel 
+                analysis={displayAnalysis}
+                fundamentals={fundamentals}
+                isLoading={isLoading || isAdjusting}
+                onRefresh={() => selectedSymbol && handleSymbolSelect(selectedSymbol)}
+                onSelectAlternate={handleSelectAlternate}
+                selectedAlternateIndex={selectedAlternateIndex}
+              />
+            </div>
+            
+            {/* Chat Panel */}
+            {showChat && selectedSymbol && displayAnalysis && (
+              <div className="h-1/2 border-t border-border/50 p-4 overflow-hidden">
+                <AnalysisChat
+                  analysis={displayAnalysis}
+                  symbol={selectedSymbol}
+                  timeframe={baseLayer?.timeframe || '1d'}
+                  onAnalysisUpdate={handleChatAnalysisUpdate}
+                  onAddLayer={addSmallerDegreeLayer}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

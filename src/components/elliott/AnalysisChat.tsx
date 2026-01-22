@@ -19,9 +19,24 @@ interface AnalysisChatProps {
   symbol: string;
   timeframe: string;
   onAnalysisUpdate?: (newAnalysis: any) => void;
+  onAddLayer?: () => void;
 }
 
-export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: AnalysisChatProps) {
+// Layer command patterns
+const LAYER_COMMANDS = [
+  /zoom\s*in/i,
+  /smaller\s*degree/i,
+  /show\s*(minor|minute)\s*waves/i,
+  /analyze\s*smaller/i,
+  /drill\s*down/i,
+  /add\s*layer/i,
+];
+
+function isLayerCommand(message: string): boolean {
+  return LAYER_COMMANDS.some(pattern => pattern.test(message));
+}
+
+export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate, onAddLayer }: AnalysisChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -55,6 +70,18 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
     setMessages(prev => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+
+    // Check if this is a layer command
+    if (isLayerCommand(userMessage.content) && onAddLayer) {
+      onAddLayer();
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: "I'm adding a smaller degree layer to the chart. This will show more detailed wave subdivisions.",
+        timestamp: new Date()
+      }]);
+      setIsLoading(false);
+      return;
+    }
 
     try {
       const { data, error } = await supabase.functions.invoke('chat-with-analysis', {
@@ -203,7 +230,8 @@ export function AnalysisChat({ analysis, symbol, timeframe, onAnalysisUpdate }: 
             "Why did you label wave 3 here?",
             "Can wave 4 be deeper?",
             "Show alternate count",
-            "What invalidates this count?"
+            "What invalidates this count?",
+            "Zoom into smaller degree"
           ].map((suggestion, idx) => (
             <button
               key={idx}

@@ -394,3 +394,72 @@ export interface AnalysisApiResponse {
   retry_after_seconds?: number;
   suggestions?: string[];
 }
+
+// ============================================================================
+// WAVE LAYER TYPES (Multi-degree chart layers)
+// ============================================================================
+
+export type WaveDegree = 'Supercycle' | 'Cycle' | 'Primary' | 'Intermediate' | 'Minor' | 'Minute';
+
+export interface WaveLayer {
+  layer_id: string;               // e.g. "SC-1W", "P-1D", "m-4H"
+  degree: WaveDegree;
+  timeframe: string;              // "1M" | "1W" | "1D" | "4H" ...
+  status: 'conclusive' | 'inconclusive' | 'structure_only';
+  waves: WavePoint[];             // must include wave, date, price, degree
+  key_levels?: KeyLevels;         // invalidation + supports/resistances
+  cage_features?: CageFeatures;   // precomputed points for drawing
+  summary?: string;
+  analyzed_at: string;
+  source: 'llm' | 'structure';
+}
+
+export interface MultiLayerAnalysis {
+  symbol: string;
+  base_layer_id: string;          // highest-degree layer chosen automatically
+  layers: WaveLayer[];            // always includes base layer first
+  historical_low: { date: string; price: number };
+}
+
+// Helper to get degree abbreviation
+export const DEGREE_ABBREV_MAP: Record<WaveDegree, string> = {
+  'Supercycle': 'SC',
+  'Cycle': 'C',
+  'Primary': 'P',
+  'Intermediate': 'I',
+  'Minor': 'm',
+  'Minute': 'μ',
+};
+
+// Helper to get next lower degree
+export const NEXT_LOWER_DEGREE: Record<WaveDegree, WaveDegree | null> = {
+  'Supercycle': 'Primary',
+  'Cycle': 'Primary',
+  'Primary': 'Minor',
+  'Intermediate': 'Minor',
+  'Minor': 'Minute',
+  'Minute': null,
+};
+
+// Wave label formatting by degree (WaveBasis-like)
+export function formatWaveLabelByDegree(waveNum: number | string, degree: WaveDegree): string {
+  const num = typeof waveNum === 'string' ? waveNum : String(waveNum);
+  const romanNumerals: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V' };
+  const lowerRoman: Record<string, string> = { '1': 'i', '2': 'ii', '3': 'iii', '4': 'iv', '5': 'v' };
+  
+  switch (degree) {
+    case 'Supercycle':
+    case 'Cycle':
+      return romanNumerals[num] || num; // I II III IV V
+    case 'Primary':
+      return `(${num})`; // (1)(2)(3)(4)(5)
+    case 'Intermediate':
+      return num; // 1 2 3 4 5
+    case 'Minor':
+      return lowerRoman[num] || num.toLowerCase(); // i ii iii iv v
+    case 'Minute':
+      return `(${lowerRoman[num] || num.toLowerCase()})`; // (i)(ii)(iii)(iv)(v)
+    default:
+      return num;
+  }
+}
