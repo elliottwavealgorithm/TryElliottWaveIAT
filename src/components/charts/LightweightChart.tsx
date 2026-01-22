@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts';
 import { Candle, ElliottAnalysisResult, WavePoint } from '@/types/analysis';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { TrendingUp, Grid3X3, Target } from 'lucide-react';
 
 // Marker type for wave labels (v5 uses different API)
 interface WaveMarker {
@@ -21,12 +24,20 @@ interface NormalizedWaveLabel {
   display: string;
 }
 
+export interface ChartOverlayToggles {
+  showWaves: boolean;
+  showCages: boolean;
+  showLevels: boolean;
+}
+
 interface LightweightChartProps {
   candles: Candle[];
   symbol: string;
   analysis?: ElliottAnalysisResult | null;
   selectedAlternateIndex?: number | null;
   height?: number;
+  overlayToggles?: ChartOverlayToggles;
+  onToggleChange?: (toggles: ChartOverlayToggles) => void;
 }
 
 // Wave colors by type
@@ -199,14 +210,35 @@ export function LightweightChart({
   symbol, 
   analysis,
   selectedAlternateIndex = null,
-  height = 500 
+  height = 500,
+  overlayToggles: externalToggles,
+  onToggleChange
 }: LightweightChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const waveLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const cageSeriesRefs = useRef<ISeriesApi<'Line'>[]>([]);
+  const levelLinesRef = useRef<any[]>([]);
   const [isReady, setIsReady] = useState(false);
+  
+  // Internal toggle state (default all ON)
+  const [internalToggles, setInternalToggles] = useState<ChartOverlayToggles>({
+    showWaves: true,
+    showCages: true,
+    showLevels: true
+  });
+  
+  const toggles = externalToggles || internalToggles;
+  
+  const handleToggle = (key: keyof ChartOverlayToggles) => {
+    const newToggles = { ...toggles, [key]: !toggles[key] };
+    if (onToggleChange) {
+      onToggleChange(newToggles);
+    } else {
+      setInternalToggles(newToggles);
+    }
+  };
 
   // Get active wave points (primary or alternate)
   const activeWavePoints: WavePoint[] = useMemo(() => {
@@ -331,12 +363,11 @@ export function LightweightChart({
     }
   }, [candles, isReady]);
 
-  // Add wave markers and lines
+  // Add wave markers and lines (respects showWaves toggle)
   useEffect(() => {
     if (!candleSeriesRef.current || !isReady || !chartRef.current) return;
 
     const chart = chartRef.current;
-    const candleSeries = candleSeriesRef.current;
 
     // Clear previous wave line series
     if (waveLineSeriesRef.current) {
@@ -346,21 +377,10 @@ export function LightweightChart({
       waveLineSeriesRef.current = null;
     }
 
-    // Clear previous cage lines
-    cageSeriesRefs.current.forEach(series => {
-      try {
-        chart.removeSeries(series);
-      } catch (e) {}
-    });
-    cageSeriesRefs.current = [];
-
-    if (!activeWavePoints || activeWavePoints.length === 0) {
+    // Skip if waves toggle is off or no wave data
+    if (!toggles.showWaves || !activeWavePoints || activeWavePoints.length === 0) {
       return;
     }
-
-    // Note: lightweight-charts v5 removed setMarkers from candlestick series
-    // Wave labels are now shown via the line series connecting wave points
-    // and the legend in the top-right corner
 
     // Create line series connecting wave points
     if (activeWavePoints.length >= 2) {
@@ -397,9 +417,9 @@ export function LightweightChart({
         console.warn('Failed to create wave lines:', e);
       }
     }
-  }, [activeWavePoints, isReady, selectedAlternateIndex]);
+  }, [activeWavePoints, isReady, selectedAlternateIndex, toggles.showWaves]);
 
-  // Draw cage lines using backend-provided pre-computed points
+  // Draw cage lines using backend-provided pre-computed points (respects showCages toggle)
   useEffect(() => {
     if (!chartRef.current || !isReady) return;
 
@@ -413,8 +433,8 @@ export function LightweightChart({
     });
     cageSeriesRefs.current = [];
 
-    // Exit if no cage features
-    if (!analysis?.cage_features) return;
+    // Exit if cages toggle is off or no cage features
+    if (!toggles.showCages || !analysis?.cage_features) return;
 
     const cageFeatures = analysis.cage_features;
 
@@ -565,20 +585,28 @@ export function LightweightChart({
         'Wedge'
       );
     }
-  }, [analysis?.cage_features, candles, isReady]);
+  }, [analysis?.cage_features, candles, isReady, toggles.showCages]);
 
-  // Add price lines for key levels
+  // Add price lines for key levels (respects showLevels toggle)
   useEffect(() => {
-    if (!candleSeriesRef.current || !isReady || !analysis?.key_levels) return;
+    if (!candleSeriesRef.current || !isReady) return;
 
     const series = candleSeriesRef.current;
 
-    // Remove existing price lines by creating new ones
-    // (Lightweight Charts doesn't have a clean way to remove specific price lines)
+    // Clear previous level lines (recreate series to properly clear)
+    levelLinesRef.current.forEach(line => {
+      try {
+        series.removePriceLine(line);
+      } catch (e) {}
+    });
+    levelLinesRef.current = [];
+
+    // Exit if levels toggle is off or no key levels
+    if (!toggles.showLevels || !analysis?.key_levels) return;
     
     analysis.key_levels.support?.forEach(level => {
       try {
-        series.createPriceLine({
+        const priceLine = series.createPriceLine({
           price: level,
           color: '#22c55e',
           lineWidth: 1,
@@ -586,12 +614,13 @@ export function LightweightChart({
           axisLabelVisible: true,
           title: 'S',
         });
+        levelLinesRef.current.push(priceLine);
       } catch (e) {}
     });
 
     analysis.key_levels.resistance?.forEach(level => {
       try {
-        series.createPriceLine({
+        const priceLine = series.createPriceLine({
           price: level,
           color: '#ef4444',
           lineWidth: 1,
@@ -599,12 +628,13 @@ export function LightweightChart({
           axisLabelVisible: true,
           title: 'R',
         });
+        levelLinesRef.current.push(priceLine);
       } catch (e) {}
     });
 
     if (analysis.key_levels.invalidation) {
       try {
-        series.createPriceLine({
+        const priceLine = series.createPriceLine({
           price: analysis.key_levels.invalidation,
           color: '#f59e0b',
           lineWidth: 2,
@@ -612,15 +642,16 @@ export function LightweightChart({
           axisLabelVisible: true,
           title: 'INV',
         });
+        levelLinesRef.current.push(priceLine);
       } catch (e) {}
     }
-  }, [analysis?.key_levels, isReady]);
+  }, [analysis?.key_levels, isReady, toggles.showLevels]);
 
   return (
     <div className="relative w-full">
-      {/* Chart Header */}
-      <div className="absolute top-2 left-2 z-10 flex items-center gap-2">
-        <span className="text-lg font-bold text-foreground">{symbol}</span>
+      {/* Overlay Toggle Controls */}
+      <div className="absolute top-2 left-2 z-20 flex items-center gap-4 bg-background/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-border/50">
+        <span className="text-sm font-medium text-foreground">{symbol}</span>
         {analysis?.status && (
           <span className={`text-xs px-2 py-0.5 rounded ${
             analysis.status === 'conclusive' 
@@ -635,11 +666,53 @@ export function LightweightChart({
             Alt #{selectedAlternateIndex + 1}
           </span>
         )}
+        
+        <div className="h-4 w-px bg-border/50" />
+        
+        {/* Toggles */}
+        <div className="flex items-center gap-1">
+          <Switch
+            id="toggle-waves"
+            checked={toggles.showWaves}
+            onCheckedChange={() => handleToggle('showWaves')}
+            className="h-4 w-7"
+          />
+          <Label htmlFor="toggle-waves" className="text-xs flex items-center gap-1 cursor-pointer">
+            <TrendingUp className="h-3 w-3 text-primary" />
+            <span className="hidden sm:inline">Waves</span>
+          </Label>
+        </div>
+        
+        <div className="flex items-center gap-1">
+          <Switch
+            id="toggle-cages"
+            checked={toggles.showCages}
+            onCheckedChange={() => handleToggle('showCages')}
+            className="h-4 w-7"
+          />
+          <Label htmlFor="toggle-cages" className="text-xs flex items-center gap-1 cursor-pointer">
+            <Grid3X3 className="h-3 w-3 text-amber-400" />
+            <span className="hidden sm:inline">Cages</span>
+          </Label>
+        </div>
+        
+        <div className="flex items-center gap-1">
+          <Switch
+            id="toggle-levels"
+            checked={toggles.showLevels}
+            onCheckedChange={() => handleToggle('showLevels')}
+            className="h-4 w-7"
+          />
+          <Label htmlFor="toggle-levels" className="text-xs flex items-center gap-1 cursor-pointer">
+            <Target className="h-3 w-3 text-green-400" />
+            <span className="hidden sm:inline">Levels</span>
+          </Label>
+        </div>
       </div>
 
-      {/* Legend */}
-      {normalizedActiveWavePoints.length > 0 && (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs">
+      {/* Wave Legend (shows when waves are ON) */}
+      {toggles.showWaves && normalizedActiveWavePoints.length > 0 && (
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 text-xs bg-background/80 backdrop-blur-sm rounded-lg px-2 py-1 border border-border/50">
           <span className="text-muted-foreground">Waves:</span>
           {normalizedActiveWavePoints.map((wp, idx) => {
             const color = WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280';
