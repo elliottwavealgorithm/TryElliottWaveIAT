@@ -1251,6 +1251,12 @@ For EVERY alternate count, you MUST include a "waves" array with the same format
 
 ## OUTPUT FORMAT
 
+**CRITICAL WAVE ARRAY REQUIREMENT**:
+- The "waves" array MUST include a "Start" or "0" entry as the FIRST element
+- This represents the origin pivot (the low/high before wave 1 begins)
+- Example: [{ "wave": "Start", "date": "...", "price": ..., "degree": "..." }, { "wave": "1", ... }, ...]
+- Without this origin point, we cannot properly draw wave 1 on the chart
+
 {
   "status": "conclusive" | "inconclusive",
   "symbol": "...",
@@ -1271,7 +1277,13 @@ For EVERY alternate count, you MUST include a "waves" array with the same format
   "historical_low": { "date": "${majorDegree.from_historical_low.date}", "price": ${majorDegree.from_historical_low.price} },
   "primary_count": {
     "pattern": "impulse" | "diagonal" | "zigzag" | "flat" | "complex",
-    "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "${majorDegree.degree}" }],
+    "correction_type": "zigzag" | "flat" | "triangle" | "combo" | null,
+    "waves": [
+      { "wave": "Start", "date": "...", "price": ..., "degree": "${majorDegree.degree}" },
+      { "wave": "1", "date": "...", "price": ..., "degree": "${majorDegree.degree}" },
+      { "wave": "2", "date": "...", "price": ..., "degree": "${majorDegree.degree}" },
+      ...
+    ],
     "current_wave": "...",
     "next_expected": "...",
     "confidence": 0-100
@@ -1282,13 +1294,17 @@ For EVERY alternate count, you MUST include a "waves" array with the same format
     "pattern": "...",
     "justification": "...",
     "key_difference": "...",
-    "waves": [{ "wave": "1", "date": "...", "price": ..., "degree": "..." }]
+    "waves": [
+      { "wave": "Start", "date": "...", "price": ..., "degree": "..." },
+      { "wave": "1", "date": "...", "price": ..., "degree": "..." },
+      ...
+    ]
   }],
   "key_levels": {
-    "support": [number, number, ...],
-    "resistance": [number, number, ...],
+    "support": [{ "level": number, "source": "pivot-derived" | "fibonacci" | "llm" }],
+    "resistance": [{ "level": number, "source": "pivot-derived" | "fibonacci" | "llm" }],
     "fibonacci_targets": [number, number, ...],
-    "invalidation": number
+    "invalidation": { "level": number, "rule": "wave4-into-wave1" | "wave2-100pct" | "wave-structure", "source": "hard-rule" | "llm" }
   },
   "forecast": {
     "short_term": { "direction": "bullish"|"bearish"|"neutral", "target": number, "timeframe": "..." },
@@ -1302,9 +1318,10 @@ For EVERY alternate count, you MUST include a "waves" array with the same format
 
 ## IMPORTANT NOTES
 
-- ALL key_levels values MUST be numeric (not strings)
-- ALL forecast directions must be: "bullish", "bearish", or "neutral"
-- The invalidation level is MANDATORY and must be a valid number`;
+- ALL key_levels values MUST be numeric (not strings) - use objects with "level" and "source" keys
+- ALL forecast directions must be: "bullish", "bearish", or "neutral"  
+- The invalidation level is MANDATORY and must be a valid number
+- EVERY waves array MUST start with a "Start" wave point representing the origin pivot`;
 }
 
 function buildUserPrompt(
@@ -1563,6 +1580,34 @@ async function callLLM(
           }
           if (report.forecast.long_term) {
             report.forecast.long_term.direction = normalizeDirection(report.forecast.long_term.direction);
+          }
+        }
+        
+        // Ensure waves arrays have Start/0 origin pivot
+        const ensureOriginPivot = (waves: any[], degree: string) => {
+          if (!waves || waves.length === 0) return waves;
+          const first = waves[0];
+          const waveLabel = String(first?.wave || '').toLowerCase();
+          if (waveLabel === 'start' || waveLabel === '0') {
+            return waves; // Already has origin
+          }
+          // Check if first wave is "1" - if so, we're missing origin
+          if (waveLabel === '1' || waveLabel.includes('1')) {
+            console.log(`Warning: waves array missing origin pivot for degree ${degree}`);
+          }
+          return waves;
+        };
+        
+        if (report.primary_count?.waves) {
+          report.primary_count.waves = ensureOriginPivot(
+            report.primary_count.waves, 
+            report.primary_count.waves[0]?.degree || 'unknown'
+          );
+        }
+        
+        for (const alt of (report.alternate_counts || [])) {
+          if (alt.waves) {
+            alt.waves = ensureOriginPivot(alt.waves, alt.waves[0]?.degree || 'unknown');
           }
         }
         

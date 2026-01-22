@@ -29,7 +29,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { TrendingUp, Grid3X3, Target, AlertTriangle, Info } from 'lucide-react';
+import { TrendingUp, Grid3X3, Target, AlertTriangle, Info, HelpCircle } from 'lucide-react';
 
 // ============================================================================
 // SERIES HELPERS - v4/v5 compatibility
@@ -81,7 +81,7 @@ export interface ChartOverlayToggles {
 }
 
 interface ChartWarning {
-  type: 'no_candles' | 'no_waves' | 'waves_outside_range' | 'no_cages';
+  type: 'no_candles' | 'no_waves' | 'waves_outside_range' | 'no_cages' | 'missing_origin';
   message: string;
 }
 
@@ -97,8 +97,6 @@ interface LightweightChartProps {
   onToggleChange?: (toggles: ChartOverlayToggles) => void;
 }
 
-type SeriesWithChartId<T> = { series: T; chartId: number };
-
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -112,6 +110,7 @@ const WAVE_COLORS = {
 
 const WAVE_LABEL_COLORS: Record<string, string> = {
   '0': '#9ca3af',
+  'Start': '#9ca3af',
   '1': '#3b82f6',
   '2': '#22c55e',
   '3': '#ef4444',
@@ -180,6 +179,12 @@ function findDominantDegree(points: NormalizedWavePoint[]): WaveDegree | null {
   return bestDeg as WaveDegree;
 }
 
+// Check if waves array has origin pivot (Start or 0)
+function hasOriginPivot(points: NormalizedWavePoint[]): boolean {
+  if (points.length === 0) return false;
+  return points.some(p => p.norm.isStart);
+}
+
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
@@ -201,7 +206,7 @@ export function LightweightChart({
   const chartInstanceIdRef = useRef(0);
   const currentChartIdRef = useRef(0);
   
-  // Operation token for overlay management
+  // Single operation token for unified overlay management
   const overlayOpRef = useRef(0);
 
   // Series refs (all managed in a single overlay effect)
@@ -316,8 +321,16 @@ export function LightweightChart({
       }
     }
     
+    // Check for missing origin pivot
+    if (normalizedActiveWavePoints.length > 0 && !hasOriginPivot(normalizedActiveWavePoints)) {
+      newWarnings.push({
+        type: 'missing_origin',
+        message: 'Missing Start/0 wave point (origin of wave 1)'
+      });
+    }
+    
     setWarnings(newWarnings);
-  }, [candles, analysis, activeWavePoints, candleDateRange]);
+  }, [candles, analysis, activeWavePoints, candleDateRange, normalizedActiveWavePoints]);
 
   // Initialize chart ONCE on mount
   useEffect(() => {
@@ -424,96 +437,127 @@ export function LightweightChart({
   }, [candles, isReady]);
 
   // ============================================================================
-  // UNIFIED OVERLAY MANAGER - Single effect for all overlays
+  // UNIFIED OVERLAY MANAGER - Single effect for all overlays to prevent race conditions
   // ============================================================================
   useEffect(() => {
+    // Guard: ensure chart is ready and not removed
     if (chartRemovedRef.current || !isReady) return;
     
     const chart = chartRef.current;
     const candleSeries = candleSeriesRef.current;
     if (!chart || !candleSeries) return;
 
-    // Operation token to prevent stale updates
+    // Increment operation token to invalidate any stale operations
     overlayOpRef.current += 1;
     const opId = overlayOpRef.current;
 
-    const isStale = () => chartRemovedRef.current || overlayOpRef.current !== opId;
+    // Stale check helper - use throughout to abort if conditions change
+    const isStale = () => chartRemovedRef.current || overlayOpRef.current !== opId || !chartRef.current;
 
-    // ========== WAVES ==========
-    const drawWaves = () => {
-      if (isStale()) return;
-      
-      // Clear existing markers first
-      try { (candleSeries as any).setMarkers?.([]); } catch {}
-      
-      // Clear wave series data
-      if (waveSeriesRef.current) {
-        try { waveSeriesRef.current.setData([]); } catch {}
-      }
+    // ========================================================================
+    // STEP 1: CLEAR ALL EXISTING OVERLAYS
+    // ========================================================================
+    
+    // Clear markers
+    try { (candleSeries as any).setMarkers?.([]); } catch {}
+    
+    // Clear wave series data (don't remove series, just clear data)
+    if (waveSeriesRef.current) {
+      try { waveSeriesRef.current.setData([]); } catch {}
+    }
+    
+    // Clear cage series data
+    cageSeriesMapRef.current.forEach(series => {
+      try { series.setData([]); } catch {}
+    });
+    
+    // Remove level price lines
+    levelLinesRef.current.forEach(line => {
+      try { candleSeries.removePriceLine(line); } catch {}
+    });
+    levelLinesRef.current = [];
 
-      if (!toggles.showWaves || normalizedActiveWavePoints.length < 2) return;
+    if (isStale()) return;
 
+    // ========================================================================
+    // STEP 2: DRAW WAVES (polyline + markers)
+    // ========================================================================
+    
+    if (toggles.showWaves && normalizedActiveWavePoints.length >= 2) {
       // Filter to valid points within candle range
       const validPoints = normalizedActiveWavePoints.filter(wp => 
         wp.date >= candleDateRange.min && wp.date <= candleDateRange.max
       );
 
-      if (validPoints.length < 2) return;
-      if (isStale()) return;
+      if (validPoints.length >= 2 && !isStale()) {
+        // Create or reuse wave series
+        if (!waveSeriesRef.current) {
+          const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
+          waveSeriesRef.current = safeAddLine(chart, {
+            color: lineColor,
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            crosshairMarkerVisible: true,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+        }
 
-      // Create or reuse wave series
-      if (!waveSeriesRef.current) {
-        const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
-        waveSeriesRef.current = safeAddLine(chart, {
-          color: lineColor,
-          lineWidth: 2,
-          lineStyle: LineStyle.Solid,
-          crosshairMarkerVisible: true,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-      }
+        if (!isStale()) {
+          // Update line color based on alternate selection
+          const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
+          try {
+            (waveSeriesRef.current as any).applyOptions?.({ color: lineColor });
+          } catch {}
 
-      if (isStale()) return;
-
-      // Set line data
-      const lineData = validPoints.map(wp => ({
-        time: toBusinessDay(wp.date) as Time,
-        value: wp.price,
-      }));
-      waveSeriesRef.current.setData(lineData);
-
-      // Set markers with Elliott Wave nomenclature
-      try {
-        const minPrice = Math.min(...validPoints.map(p => p.price));
-        const markers = validPoints.map(wp => {
-          const isLow = wp.price <= minPrice * 1.02;
-          const effectiveDegree = wp.norm.degreeKey || dominantDegree || 'Primary';
-          
-          return {
+          // Set line data
+          const lineData = validPoints.map(wp => ({
             time: toBusinessDay(wp.date) as Time,
-            position: isLow ? 'belowBar' : 'aboveBar',
-            color: WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280',
-            shape: 'circle',
-            text: wp.norm.displayEw, // Use Elliott Wave standard display
-            size: 1,
-          };
-        });
-        (candleSeries as any).setMarkers?.(markers);
-      } catch {}
-    };
+            value: wp.price,
+          }));
+          waveSeriesRef.current.setData(lineData);
 
-    // ========== CAGES ==========
-    const drawCages = () => {
-      if (isStale()) return;
-      
-      // Clear existing cage series data
-      cageSeriesMapRef.current.forEach(series => {
-        try { series.setData([]); } catch {}
-      });
+          // Create markers with proper Elliott Wave nomenclature
+          try {
+            const minPrice = Math.min(...validPoints.map(p => p.price));
+            const maxPrice = Math.max(...validPoints.map(p => p.price));
+            
+            const markers = validPoints.map(wp => {
+              // Position marker above or below bar based on price relative to range
+              const priceRange = maxPrice - minPrice;
+              const relativePos = priceRange > 0 ? (wp.price - minPrice) / priceRange : 0.5;
+              const isLow = relativePos < 0.3;
+              
+              const effectiveDegree = wp.norm.degreeKey || dominantDegree || 'Primary';
+              
+              // Get proper display label using standard EW nomenclature
+              let displayLabel = wp.norm.displayEw;
+              if (wp.norm.isStart) {
+                displayLabel = '○'; // Circle for origin/start
+              }
+              
+              return {
+                time: toBusinessDay(wp.date) as Time,
+                position: isLow ? 'belowBar' : 'aboveBar',
+                color: WAVE_LABEL_COLORS[wp.norm.colorKey] || '#6b7280',
+                shape: wp.norm.isStart ? 'circle' : 'circle' as const,
+                text: displayLabel,
+                size: wp.norm.isStart ? 0.5 : 1,
+              };
+            });
+            (candleSeries as any).setMarkers?.(markers);
+          } catch {}
+        }
+      }
+    }
 
-      if (!toggles.showCages || !baseLayer?.cage_features) return;
+    if (isStale()) return;
 
+    // ========================================================================
+    // STEP 3: DRAW CAGES (2-4, 5-B, Wedge) with break markers
+    // ========================================================================
+    
+    if (toggles.showCages && baseLayer?.cage_features) {
       const cf = baseLayer.cage_features;
       
       const drawCageFromPoints = (
@@ -522,14 +566,20 @@ export function LightweightChart({
         color: string,
         isBroken: boolean,
         cageLabel: string,
-        breakInfo?: { break_date?: string | null; break_price?: number | null; boundary_value_at_break?: number | null; break_strength_atr?: number }
+        breakInfo?: { 
+          break_date?: string | null; 
+          break_price?: number | null; 
+          boundary_value_at_break?: number | null; 
+          break_strength_atr?: number;
+          break_direction?: 'up' | 'down';
+        }
       ) => {
+        if (isStale()) return;
         if (!upperPoints || !lowerPoints || upperPoints.length < 2 || lowerPoints.length < 2) return;
         if (!upperPoints.every(p => isValidDateStr(p.date)) || !lowerPoints.every(p => isValidDateStr(p.date))) return;
-        if (isStale()) return;
 
         const style = isBroken ? LineStyle.Dotted : LineStyle.Dashed;
-        const opacity = isBroken ? '60' : '';
+        const opacity = isBroken ? '99' : '';
         const width = isBroken ? 1 : 2;
 
         // Lower line
@@ -574,15 +624,34 @@ export function LightweightChart({
           { time: toBusinessDay(upperPoints[1].date) as Time, value: upperPoints[1].value },
         ]);
 
-        // TODO: Add break marker when break_date exists
+        // Add break marker if cage is broken
+        if (isBroken && breakInfo?.break_date && isValidDateStr(breakInfo.break_date)) {
+          const breakPrice = breakInfo.break_price || breakInfo.boundary_value_at_break;
+          if (breakPrice && !isStale()) {
+            // Add break indicator as a price line with label
+            try {
+              const breakDirection = breakInfo.break_direction || 'up';
+              const atrStr = breakInfo.break_strength_atr ? ` (${breakInfo.break_strength_atr.toFixed(1)} ATR)` : '';
+              const breakLine = candleSeries.createPriceLine({
+                price: breakPrice,
+                color: breakDirection === 'up' ? '#22c55e' : '#ef4444',
+                lineWidth: 1,
+                lineStyle: LineStyle.SparseDotted,
+                axisLabelVisible: false,
+                title: `${cageLabel} break ${breakDirection === 'up' ? '↑' : '↓'}${atrStr}`,
+              });
+              levelLinesRef.current.push(breakLine);
+            } catch {}
+          }
+        }
       };
 
-      // Draw cage_2_4
+      // Draw cage_2_4 (impulse channel: Wave 2 → Wave 4, parallel through Wave 3)
       if (cf.cage_2_4?.exists) {
         drawCageFromPoints(
           cf.cage_2_4.upper_points,
           cf.cage_2_4.lower_points,
-          '#f59e0b',
+          '#f59e0b', // Amber
           cf.cage_2_4.broken || false,
           '2-4',
           {
@@ -590,17 +659,19 @@ export function LightweightChart({
             break_price: cf.cage_2_4.break_price,
             boundary_value_at_break: cf.cage_2_4.boundary_value_at_break,
             break_strength_atr: cf.cage_2_4.break_strength_atr,
+            break_direction: cf.cage_2_4.break_direction,
           }
         );
       }
 
-      // Draw cage_ACB (5-B channel for corrections)
+      // Draw cage_ACB (5-B channel: Wave 5 → Wave B, parallel through Wave A)
       if (cf.cage_ACB?.exists) {
         const acbBroken = cf.cage_ACB.broken_up || cf.cage_ACB.broken_down || false;
+        const acbDirection = cf.cage_ACB.broken_up ? 'up' : cf.cage_ACB.broken_down ? 'down' : undefined;
         drawCageFromPoints(
           cf.cage_ACB.upper_points,
           cf.cage_ACB.lower_points,
-          '#06b6d4',
+          '#06b6d4', // Cyan
           acbBroken,
           '5-B',
           {
@@ -608,6 +679,7 @@ export function LightweightChart({
             break_price: cf.cage_ACB.break_price,
             boundary_value_at_break: cf.cage_ACB.boundary_value_at_break,
             break_strength_atr: cf.cage_ACB.break_strength_atr,
+            break_direction: acbDirection,
           }
         );
       }
@@ -617,7 +689,7 @@ export function LightweightChart({
         drawCageFromPoints(
           cf.wedge_cage.upper_points,
           cf.wedge_cage.lower_points,
-          '#a855f7',
+          '#a855f7', // Purple
           cf.wedge_cage.broken || false,
           'Wedge',
           {
@@ -628,83 +700,82 @@ export function LightweightChart({
           }
         );
       }
-    };
+    }
 
-    // ========== LEVELS (S/R/INV) ==========
-    const drawLevels = () => {
-      if (isStale()) return;
-      
-      // Remove existing price lines
-      levelLinesRef.current.forEach(line => {
-        try { candleSeries.removePriceLine(line); } catch {}
-      });
-      levelLinesRef.current = [];
+    if (isStale()) return;
 
-      if (!toggles.showLevels || !baseLayer?.key_levels) return;
-
+    // ========================================================================
+    // STEP 4: DRAW KEY LEVELS (Support / Resistance / Invalidation)
+    // ========================================================================
+    
+    if (toggles.showLevels && baseLayer?.key_levels) {
       const kl = baseLayer.key_levels;
       const degreeAbbrev = baseLayer.degree ? DEGREE_ABBREV_MAP[baseLayer.degree] : '';
-      const sourceLabel = baseLayer.source === 'structure' ? ' (struct)' : '';
+      const sourceLabel = baseLayer.source === 'structure' ? ' [S]' : '';
 
-      // Supports (green)
+      // Supports (green dashed)
       if (Array.isArray(kl.support)) {
         kl.support.forEach((entry, idx) => {
+          if (isStale()) return;
           const normalized = normalizeKeyLevelEntry(entry);
           if (isNaN(normalized.level)) return;
           try {
+            const sourceTag = normalized.source !== 'pivot-derived' ? ` [${normalized.source.charAt(0).toUpperCase()}]` : '';
             const line = candleSeries.createPriceLine({
               price: normalized.level,
               color: '#22c55e',
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               axisLabelVisible: true,
-              title: `${degreeAbbrev}S${idx + 1}${sourceLabel}`,
+              title: `Support S${idx + 1}${sourceTag}`,
             });
             levelLinesRef.current.push(line);
           } catch {}
         });
       }
 
-      // Resistances (red)
+      // Resistances (red dashed)
       if (Array.isArray(kl.resistance)) {
         kl.resistance.forEach((entry, idx) => {
+          if (isStale()) return;
           const normalized = normalizeKeyLevelEntry(entry);
           if (isNaN(normalized.level)) return;
           try {
+            const sourceTag = normalized.source !== 'pivot-derived' ? ` [${normalized.source.charAt(0).toUpperCase()}]` : '';
             const line = candleSeries.createPriceLine({
               price: normalized.level,
               color: '#ef4444',
               lineWidth: 1,
               lineStyle: LineStyle.Dashed,
               axisLabelVisible: true,
-              title: `${degreeAbbrev}R${idx + 1}${sourceLabel}`,
+              title: `Resistance R${idx + 1}${sourceTag}`,
             });
             levelLinesRef.current.push(line);
           } catch {}
         });
       }
 
-      // Invalidation (orange, prominent)
+      // Invalidation (amber, prominent) - the critical Elliott level
       const invLevel = getInvalidationLevel(kl.invalidation);
-      if (invLevel > 0 && !isNaN(invLevel)) {
+      if (invLevel > 0 && !isNaN(invLevel) && !isStale()) {
         try {
+          // Get rule if available
+          let invRule = '';
+          if (typeof kl.invalidation === 'object' && kl.invalidation?.rule) {
+            invRule = ` (${kl.invalidation.rule})`;
+          }
           const line = candleSeries.createPriceLine({
             price: invLevel,
             color: '#f59e0b',
             lineWidth: 2,
             lineStyle: LineStyle.LargeDashed,
             axisLabelVisible: true,
-            title: `${degreeAbbrev}INV`,
+            title: `INV${invRule}`,
           });
           levelLinesRef.current.push(line);
         } catch {}
       }
-    };
-
-    // Execute all drawing in sequence (same operation)
-    drawWaves();
-    drawCages();
-    drawLevels();
+    }
 
   }, [
     isReady,
@@ -784,11 +855,11 @@ export function LightweightChart({
           />
           <Label htmlFor="toggle-cages" className="text-xs flex items-center gap-1 cursor-pointer">
             <Grid3X3 className="h-3 w-3 text-amber-400" />
-            <span className="hidden sm:inline">Cages</span>
+            <span className="hidden sm:inline">Channels</span>
           </Label>
         </div>
         
-        {/* Levels Toggle with Tooltip */}
+        {/* Key Levels Toggle with Tooltip */}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -802,19 +873,22 @@ export function LightweightChart({
                 <Label htmlFor="toggle-levels" className="text-xs flex items-center gap-1 cursor-pointer">
                   <Target className="h-3 w-3 text-green-400" />
                   <span className="hidden sm:inline">Key Levels</span>
-                  <Info className="h-3 w-3 text-muted-foreground" />
+                  <HelpCircle className="h-3 w-3 text-muted-foreground" />
                 </Label>
               </div>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="max-w-xs text-xs">
               <p className="font-semibold mb-1">Key Levels (S/R/INV)</p>
               <ul className="space-y-0.5">
-                <li><span className="text-green-400">S1, S2...</span> = Supports from pivots</li>
-                <li><span className="text-red-400">R1, R2...</span> = Resistances from pivots</li>
-                <li><span className="text-amber-400">INV</span> = Invalidation (breaks count)</li>
+                <li><span className="text-green-400">Support S1, S2...</span> – Price floors from pivots/structure</li>
+                <li><span className="text-red-400">Resistance R1, R2...</span> – Price ceilings from pivots/structure</li>
+                <li><span className="text-amber-400 font-bold">INV</span> – Invalidation: if price crosses here, this wave count is wrong</li>
               </ul>
+              <p className="mt-2 text-muted-foreground text-[10px]">
+                Source tags: [L] = LLM, [F] = Fibonacci, [S] = Structure
+              </p>
               {baseLayer?.source === 'structure' && (
-                <p className="mt-1 text-muted-foreground italic">Source: Structure-derived</p>
+                <p className="mt-1 text-muted-foreground italic">Currently showing structure-derived levels</p>
               )}
             </TooltipContent>
           </Tooltip>
@@ -839,7 +913,7 @@ export function LightweightChart({
                 }}
                 title={`${wp.wave} @ ${wp.price.toFixed(2)} (${wp.date})`}
               >
-                {wp.norm.displayEw}
+                {wp.norm.isStart ? '○' : wp.norm.displayEw}
               </span>
             );
           })}
