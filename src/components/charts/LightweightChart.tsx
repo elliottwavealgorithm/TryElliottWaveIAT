@@ -1,10 +1,41 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, Time, LineStyle, BusinessDay } from 'lightweight-charts';
+import {
+  createChart,
+  ColorType,
+  LineStyle,
+  type IChartApi,
+  type ISeriesApi,
+  type Time,
+  type BusinessDay,
+  CandlestickSeries,
+  LineSeries,
+} from 'lightweight-charts';
 import { Candle, ElliottAnalysisResult, WavePoint } from '@/types/analysis';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TrendingUp, Grid3X3, Target, AlertTriangle } from 'lucide-react';
 
+// ============================================================================
+// SERIES HELPERS - v4/v5 compatibility
+// ============================================================================
+
+function safeAddCandles(chart: IChartApi, options: Record<string, unknown>): ISeriesApi<'Candlestick'> {
+  // v4 API: addCandlestickSeries()
+  if (typeof (chart as any).addCandlestickSeries === 'function') {
+    return (chart as any).addCandlestickSeries(options);
+  }
+  // v5 API: addSeries(CandlestickSeries, options)
+  return (chart as any).addSeries(CandlestickSeries, options);
+}
+
+function safeAddLine(chart: IChartApi, options: Record<string, unknown>): ISeriesApi<'Line'> {
+  // v4 API: addLineSeries()
+  if (typeof (chart as any).addLineSeries === 'function') {
+    return (chart as any).addLineSeries(options);
+  }
+  // v5 API: addSeries(LineSeries, options)
+  return (chart as any).addSeries(LineSeries, options);
+}
 // ============================================================================
 // TIME FORMAT HELPER - Convert YYYY-MM-DD to BusinessDay
 // ============================================================================
@@ -363,28 +394,14 @@ export function LightweightChart({
       },
     });
 
-    let candleSeries: any;
-    if (typeof (chart as any).addCandlestickSeries === 'function') {
-      candleSeries = (chart as any).addCandlestickSeries({
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor: '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-      });
-    } else {
-      candleSeries = (chart as any).addSeries({
-        type: 'Candlestick',
-      }, {
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor: '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-      });
-    }
+    const candleSeries = safeAddCandles(chart, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+    });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
@@ -517,25 +534,15 @@ export function LightweightChart({
 
       let lineMeta = waveLineSeriesRef.current;
       if (!isCurrentSeries(lineMeta, currentChartId)) {
-        let lineSeries: any;
-        if (typeof (chart as any).addLineSeries === 'function') {
-          lineSeries = (chart as any).addLineSeries({
-            color: lineColor,
-            lineWidth: 2,
-            lineStyle: LineStyle.Solid,
-            crosshairMarkerVisible: true,
-            lastValueVisible: false,
-            priceLineVisible: false,
-          });
-        } else {
-          lineSeries = (chart as any).addSeries({
-            type: 'Line',
-          }, {
-            color: lineColor,
-            lineWidth: 2,
-          });
-        }
-        lineMeta = { series: lineSeries as ISeriesApi<'Line'>, chartId: currentChartId };
+        const lineSeries = safeAddLine(chart, {
+          color: lineColor,
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          crosshairMarkerVisible: true,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        });
+        lineMeta = { series: lineSeries, chartId: currentChartId };
         waveLineSeriesRef.current = lineMeta;
       } else {
         // Update color when switching between primary/alternate
@@ -620,22 +627,14 @@ export function LightweightChart({
         return existing;
       }
 
-      let s: any;
-      if (typeof (chart as any).addLineSeries === 'function') {
-        s = (chart as any).addLineSeries({
-          color: isBroken ? `${color}60` : color,
-          lineWidth: isBroken ? 1 : 2,
-          lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
-          crosshairMarkerVisible: false,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
-      } else {
-        s = (chart as any).addSeries({ type: 'Line' }, {
-          color: isBroken ? `${color}60` : color,
-          lineWidth: isBroken ? 1 : 2,
-        });
-      }
+      const s = safeAddLine(chart, {
+        color: isBroken ? `${color}60` : color,
+        lineWidth: isBroken ? 1 : 2,
+        lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+        crosshairMarkerVisible: false,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
 
       const meta: SeriesWithChartId<ISeriesApi<'Line'>> = { series: s as ISeriesApi<'Line'>, chartId: currentChartId };
       cageSeriesByKeyRef.current[key] = meta;
