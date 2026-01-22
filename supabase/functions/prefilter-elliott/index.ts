@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const API_VERSION = "0.1";
+const API_VERSION = "0.2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -35,7 +35,7 @@ interface CageInfo {
   exists: boolean;
   broken: boolean;
   break_direction?: 'up' | 'down';
-  break_strength_pct?: number;
+  break_strength_atr?: number;
 }
 
 interface PrefilterRequest {
@@ -46,11 +46,13 @@ interface PrefilterRequest {
 interface PrefilterResult {
   symbol: string;
   structure_score: number;
+  raw_structure_score: number;
   regime_hint: 'trending' | 'ranging' | 'unclear';
   cage_presence_score: number;
   alternation_score: number;
   proportionality_score: number;
   pivot_quality_score: number;
+  wave3_bonus: number;
   notes: string[];
   api_version: string;
 }
@@ -243,12 +245,13 @@ function computeAdaptiveZigZag(
 
 // ============================================================================
 // STRUCTURE SCORING (Non-LLM Elliott Wave readiness)
+// Max theoretical raw score: 120 (30 + 25 + 30 + 25 + 10)
+// Normalized to 0-100 via: round((raw / 120) * 100)
 // ============================================================================
 
 function calculateAlternationScore(pivots: Pivot[]): number {
   if (pivots.length < 4) return 0;
   
-  let score = 0;
   let alternationValid = true;
   
   // Check alternation pattern (high-low-high-low)
@@ -259,13 +262,8 @@ function calculateAlternationScore(pivots: Pivot[]): number {
     }
   }
   
-  if (alternationValid) {
-    score = 30;
-  } else {
-    score = 10;
-  }
-  
-  return score;
+  // Max: 30
+  return alternationValid ? 30 : 10;
 }
 
 function calculateProportionalityScore(pivots: Pivot[]): number {
@@ -281,13 +279,13 @@ function calculateProportionalityScore(pivots: Pivot[]): number {
   if (moves.length < 2) return 0;
   
   // Check if moves are proportional (not extreme variance)
-  const avg = moves.reduce((a, b) => a + b, 0) / moves.length;
   const maxMove = Math.max(...moves);
   const minMove = Math.min(...moves);
   
   // Good proportionality: max is not more than 4x min
   const ratio = maxMove / Math.max(minMove, 0.1);
   
+  // Max: 25
   if (ratio <= 3) return 25;
   if (ratio <= 5) return 15;
   if (ratio <= 8) return 8;
@@ -328,10 +326,11 @@ function calculatePivotQualityScore(candles: Candle[], atr: number): number {
     prominenceScore = 4;
   }
   
+  // Max: 30
   return countScore + prominenceScore;
 }
 
-function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[]): { score: number; info: CageInfo } {
+function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[], atr: number): { score: number; info: CageInfo } {
   if (pivots.length < 5) {
     return { score: 0, info: { exists: false, broken: false } };
   }
@@ -361,19 +360,55 @@ function calculateCagePresenceScore(candles: Candle[], pivots: Pivot[]): { score
   const lastClose = candles[lastIdx].close;
   
   const broken = lastClose < projectedLower;
+  const breakStrengthAtr = broken ? Math.abs(projectedLower - lastClose) / atr : 0;
   
-  let score = 15; // Base score for cage existence
+  // FIXED cage scoring logic:
+  // exists -> +10
+  // exists && !broken -> +10 extra (total 20)
+  // exists && broken && break_strength_atr >= 0.8 -> +3 (total 13)
+  // otherwise just exists bonus (10)
+  let score = 10; // Base for cage existence
+  
   if (!broken) {
-    score += 10; // Bonus for unbroken cage
+    score += 10; // Bonus for unbroken cage: total 20
+  } else if (breakStrengthAtr >= 0.8) {
+    score += 3; // Small bonus for significant break: total 13
   }
+  // Otherwise just 10 for broken cage with weak break
   
+  // Max from cage: ~25 theoretical (but realistic max is 20)
   return {
-    score,
+    score: Math.min(25, score),
     info: {
       exists: true,
       broken,
-      break_direction: broken ? 'down' : undefined
+      break_direction: broken ? 'down' : undefined,
+      break_strength_atr: breakStrengthAtr
     }
+  };
+}
+
+function calculateWave3Bonus(pivots: Pivot[]): { bonus: number; hasImpulseLegs: boolean } {
+  // Only apply if 3+ candidate impulse legs are detected
+  const upMoves: number[] = [];
+  for (let i = 0; i < pivots.length - 1; i++) {
+    if (pivots[i].type === 'low' && pivots[i + 1].type === 'high') {
+      upMoves.push(pivots[i + 1].price - pivots[i].price);
+    }
+  }
+  
+  // Guard: require at least 3 impulse legs
+  if (upMoves.length < 3) {
+    return { bonus: 0, hasImpulseLegs: false };
+  }
+  
+  const lastThree = upMoves.slice(-3);
+  const middleIsSmallest = lastThree[1] <= Math.min(lastThree[0], lastThree[2]);
+  
+  // Max: 10
+  return {
+    bonus: middleIsSmallest ? 0 : 10,
+    hasImpulseLegs: true
   };
 }
 
@@ -414,11 +449,13 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         symbol,
         structure_score: 0,
+        raw_structure_score: 0,
         regime_hint: 'unclear',
         cage_presence_score: 0,
         alternation_score: 0,
         proportionality_score: 0,
         pivot_quality_score: 0,
+        wave3_bonus: 0,
         notes: ['Insufficient data (<100 bars)'],
         api_version: API_VERSION
       }), {
@@ -433,7 +470,7 @@ serve(async (req) => {
     const macroPivots = computeAdaptiveZigZag(candles, 10.0, 10, atr, 3.0, 'macro');
     const mesoPivots = computeAdaptiveZigZag(candles, 5.0, 5, atr, 1.5, 'meso');
 
-    // Score components
+    // Score components (raw values, will normalize at end)
     const alternation_score = calculateAlternationScore(mesoPivots);
     if (alternation_score >= 25) notes.push('Good alternation pattern');
 
@@ -443,26 +480,22 @@ serve(async (req) => {
     const pivot_quality_score = calculatePivotQualityScore(candles, atr);
     if (pivot_quality_score >= 25) notes.push('Clean pivot structure');
 
-    const { score: cage_presence_score, info: cageInfo } = calculateCagePresenceScore(candles, mesoPivots);
+    const { score: cage_presence_score, info: cageInfo } = calculateCagePresenceScore(candles, mesoPivots, atr);
     if (cageInfo.exists) {
-      notes.push(cageInfo.broken ? 'Cage broken' : 'Intact cage channel');
-    }
-
-    // Check wave 3 not shortest (basic approximation)
-    const upMoves: number[] = [];
-    for (let i = 0; i < mesoPivots.length - 1; i++) {
-      if (mesoPivots[i].type === 'low' && mesoPivots[i + 1].type === 'high') {
-        upMoves.push(mesoPivots[i + 1].price - mesoPivots[i].price);
+      if (cageInfo.broken) {
+        notes.push(`Cage broken (strength: ${cageInfo.break_strength_atr?.toFixed(2)} ATR)`);
+      } else {
+        notes.push('Intact cage channel');
       }
     }
-    
-    let wave3Bonus = 0;
-    if (upMoves.length >= 3) {
-      const lastThree = upMoves.slice(-3);
-      const middleIsSmallest = lastThree[1] <= Math.min(lastThree[0], lastThree[2]);
-      if (!middleIsSmallest) {
-        wave3Bonus = 10;
+
+    // Wave 3 bonus with guard
+    const { bonus: wave3_bonus, hasImpulseLegs } = calculateWave3Bonus(mesoPivots);
+    if (hasImpulseLegs) {
+      if (wave3_bonus > 0) {
         notes.push('W3≠shortest check passed');
+      } else {
+        notes.push('W3 may be shortest');
       }
     }
 
@@ -470,28 +503,32 @@ serve(async (req) => {
     const regime_hint = determineRegime(candles);
     if (regime_hint === 'trending') notes.push('Trending regime');
 
-    // Calculate final structure score
-    const structure_score = Math.min(100,
-      alternation_score +
-      proportionality_score +
-      pivot_quality_score +
-      cage_presence_score +
-      wave3Bonus
-    );
+    // Calculate raw structure score (max theoretical: 120)
+    const raw_structure_score = 
+      alternation_score +       // Max 30
+      proportionality_score +   // Max 25
+      pivot_quality_score +     // Max 30
+      cage_presence_score +     // Max 25
+      wave3_bonus;              // Max 10
+
+    // Normalize to 0-100 scale: (raw / 120) * 100
+    const structure_score = Math.round((raw_structure_score / 120) * 100);
 
     const result: PrefilterResult = {
       symbol,
-      structure_score: Math.round(structure_score * 10) / 10,
+      structure_score,
+      raw_structure_score: Math.round(raw_structure_score * 10) / 10,
       regime_hint,
       cage_presence_score,
       alternation_score,
       proportionality_score,
       pivot_quality_score,
+      wave3_bonus,
       notes,
       api_version: API_VERSION
     };
 
-    console.log(`Prefilter complete for ${symbol}: structure_score=${structure_score}`);
+    console.log(`Prefilter complete for ${symbol}: raw=${raw_structure_score}, normalized=${structure_score}`);
 
     return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
