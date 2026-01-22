@@ -56,6 +56,15 @@ interface LightweightChartProps {
   onToggleChange?: (toggles: ChartOverlayToggles) => void;
 }
 
+type SeriesWithChartId<T> = { series: T; chartId: number };
+
+function isCurrentSeries<T>(
+  meta: SeriesWithChartId<T> | null,
+  currentChartId: number
+): meta is SeriesWithChartId<T> {
+  return !!meta && meta.chartId === currentChartId;
+}
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -223,9 +232,14 @@ export function LightweightChart({
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const chartRemovedRef = useRef(false); // Track if chart was removed
+  const chartInstanceIdRef = useRef(0);
+  const currentChartIdRef = useRef(0);
+  const candleSeriesChartIdRef = useRef(0);
+
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const waveLineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const cageSeriesRefs = useRef<ISeriesApi<'Line'>[]>([]);
+  const waveLineSeriesRef = useRef<SeriesWithChartId<ISeriesApi<'Line'>> | null>(null);
+  const cageSeriesRefs = useRef<Array<SeriesWithChartId<ISeriesApi<'Line'>>>>([]);
+  const cageSeriesByKeyRef = useRef<Record<string, SeriesWithChartId<ISeriesApi<'Line'>>>>({});
   const levelLinesRef = useRef<any[]>([]);
   const [isReady, setIsReady] = useState(false);
   const [warnings, setWarnings] = useState<ChartWarning[]>([]);
@@ -317,10 +331,15 @@ export function LightweightChart({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Reset removed flag on mount
+    // Create chart ONCE per mount
     chartRemovedRef.current = false;
+    chartInstanceIdRef.current += 1;
+    const myId = chartInstanceIdRef.current;
+    currentChartIdRef.current = myId;
 
-    const chart = createChart(chartContainerRef.current, {
+    const container = chartContainerRef.current;
+
+    const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: 'rgba(150, 150, 150, 1)',
@@ -337,7 +356,7 @@ export function LightweightChart({
         timeVisible: true,
         secondsVisible: false,
       },
-      width: chartContainerRef.current.clientWidth,
+      width: container.clientWidth,
       height,
       crosshair: {
         mode: 1,
@@ -369,33 +388,62 @@ export function LightweightChart({
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
+    candleSeriesChartIdRef.current = myId;
     setIsReady(true);
 
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current && !chartRemovedRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
+    // Keep width in sync with container (ResizeObserver avoids window resize races)
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(() => {
+        if (chartRemovedRef.current) return;
+        const c = chartRef.current;
+        if (!c || currentChartIdRef.current !== myId) return;
+        const w = container.clientWidth;
+        if (w > 0) {
+          c.applyOptions({ width: w });
+        }
+      });
+      ro.observe(container);
+    } catch {
+      // Ignore (old browsers) - chart will still render with initial width.
+    }
 
     return () => {
-      window.removeEventListener('resize', handleResize);
       chartRemovedRef.current = true; // Mark as removed BEFORE removing
-      setIsReady(false);
-      chart.remove();
+      currentChartIdRef.current = 0;
+
+      try {
+        ro?.disconnect();
+      } catch {}
+
+      // Clear refs (avoid later effects touching stale series)
       chartRef.current = null;
       candleSeriesRef.current = null;
       waveLineSeriesRef.current = null;
       cageSeriesRefs.current = [];
+      cageSeriesByKeyRef.current = {};
+      levelLinesRef.current = [];
+      candleSeriesChartIdRef.current = 0;
+
+      try {
+        chart.remove();
+      } catch {}
     };
+  }, []);
+
+  // Apply height updates WITHOUT recreating the chart
+  useEffect(() => {
+    if (chartRemovedRef.current) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions({ height });
   }, [height]);
 
   // Update candle data with BusinessDay format
   useEffect(() => {
+    if (chartRemovedRef.current) return;
     if (!candleSeriesRef.current || !isReady || candles.length === 0) return;
+    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
 
     const chartData = candles
       .filter(c => isValidDateStr(c.date))
@@ -422,22 +470,27 @@ export function LightweightChart({
 
   // Add wave lines with BusinessDay format
   useEffect(() => {
-    // Guard against stale chart reference
-    if (!candleSeriesRef.current || !isReady || !chartRef.current || chartRemovedRef.current) return;
+    if (chartRemovedRef.current) return;
+    if (!candleSeriesRef.current || !isReady) return;
+    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
 
-    const chart = chartRef.current;
+    const currentChartId = currentChartIdRef.current;
 
-    // Clear previous wave line series
-    if (waveLineSeriesRef.current) {
-      try {
-        if (!chartRemovedRef.current) {
-          chart.removeSeries(waveLineSeriesRef.current);
-        }
-      } catch (e) {}
+    // If we have a stale series (from some previous chart instance), drop it without touching chart.removeSeries
+    if (waveLineSeriesRef.current && waveLineSeriesRef.current.chartId !== currentChartId) {
       waveLineSeriesRef.current = null;
     }
 
+    // Toggle off => keep series but clear data (avoid remove/add churn)
     if (!toggles.showWaves || normalizedActiveWavePoints.length === 0) {
+      if (isCurrentSeries(waveLineSeriesRef.current, currentChartId)) {
+        try {
+          waveLineSeriesRef.current.series.setData([]);
+        } catch {}
+      }
+      try {
+        (candleSeriesRef.current as any).setMarkers?.([]);
+      } catch {}
       return;
     }
 
@@ -448,32 +501,47 @@ export function LightweightChart({
 
     if (validWavePoints.length < 2) {
       console.warn('[LightweightChart] Less than 2 valid wave points within candle range');
+      if (isCurrentSeries(waveLineSeriesRef.current, currentChartId)) {
+        try {
+          waveLineSeriesRef.current.series.setData([]);
+        } catch {}
+      }
       return;
     }
 
-    // Guard again before adding series
-    if (chartRemovedRef.current || !chartRef.current) return;
+    const chart = chartRef.current;
+    if (!chart) return;
 
     try {
       const lineColor = selectedAlternateIndex !== null ? WAVE_COLORS.alternate : WAVE_COLORS.primary;
-      
-      let lineSeries: any;
-      if (typeof (chart as any).addLineSeries === 'function') {
-        lineSeries = (chart as any).addLineSeries({
-          color: lineColor,
-          lineWidth: 2,
-          lineStyle: LineStyle.Solid,
-          crosshairMarkerVisible: true,
-          lastValueVisible: false,
-          priceLineVisible: false,
-        });
+
+      let lineMeta = waveLineSeriesRef.current;
+      if (!isCurrentSeries(lineMeta, currentChartId)) {
+        let lineSeries: any;
+        if (typeof (chart as any).addLineSeries === 'function') {
+          lineSeries = (chart as any).addLineSeries({
+            color: lineColor,
+            lineWidth: 2,
+            lineStyle: LineStyle.Solid,
+            crosshairMarkerVisible: true,
+            lastValueVisible: false,
+            priceLineVisible: false,
+          });
+        } else {
+          lineSeries = (chart as any).addSeries({
+            type: 'Line',
+          }, {
+            color: lineColor,
+            lineWidth: 2,
+          });
+        }
+        lineMeta = { series: lineSeries as ISeriesApi<'Line'>, chartId: currentChartId };
+        waveLineSeriesRef.current = lineMeta;
       } else {
-        lineSeries = (chart as any).addSeries({
-          type: 'Line',
-        }, {
-          color: lineColor,
-          lineWidth: 2,
-        });
+        // Update color when switching between primary/alternate
+        try {
+          (lineMeta.series as any).applyOptions?.({ color: lineColor });
+        } catch {}
       }
 
       const lineData = validWavePoints.map(wp => ({
@@ -482,8 +550,7 @@ export function LightweightChart({
       }));
 
       console.log(`[LightweightChart] Drawing wave line with ${lineData.length} points`);
-      lineSeries.setData(lineData);
-      waveLineSeriesRef.current = lineSeries;
+      lineMeta.series.setData(lineData);
 
       // Add markers for wave labels
       try {
@@ -510,34 +577,52 @@ export function LightweightChart({
 
   // Draw cage lines with BusinessDay format
   useEffect(() => {
-    // Guard against stale chart reference
-    if (!chartRef.current || !isReady || chartRemovedRef.current) return;
+    if (chartRemovedRef.current) return;
+    if (!isReady) return;
 
     const chart = chartRef.current;
+    if (!chart) return;
 
-    // Clear previous cage lines
-    cageSeriesRefs.current.forEach(series => {
-      try {
-        if (!chartRemovedRef.current) {
-          chart.removeSeries(series);
-        }
-      } catch (e) {}
-    });
-    cageSeriesRefs.current = [];
+    const currentChartId = currentChartIdRef.current;
+
+    // Drop any stale cage series refs (from previous chart instances)
+    if (cageSeriesRefs.current.some(m => m.chartId !== currentChartId)) {
+      cageSeriesRefs.current = [];
+      cageSeriesByKeyRef.current = {};
+    }
 
     if (!toggles.showCages || !analysis?.cage_features) {
       console.log('[LightweightChart] Cages toggle off or no cage_features');
+
+      // Toggle off => clear all cage data but keep series instances
+      cageSeriesRefs.current.forEach(meta => {
+        if (meta.chartId !== currentChartId) return;
+        try {
+          meta.series.setData([]);
+        } catch {}
+      });
       return;
     }
 
     const cageFeatures = analysis.cage_features;
 
-    const createLineSeries = (color: string, isBroken: boolean): any | null => {
-      // Guard before creating series
-      if (chartRemovedRef.current || !chartRef.current) return null;
-      
+    const getOrCreateCageSeries = (key: string, color: string, isBroken: boolean) => {
+      const existing = cageSeriesByKeyRef.current[key];
+      if (existing && existing.chartId === currentChartId) {
+        // Update style as broken/unbroken changes
+        try {
+          (existing.series as any).applyOptions?.({
+            color: isBroken ? `${color}60` : color,
+            lineWidth: isBroken ? 1 : 2,
+            lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
+          });
+        } catch {}
+        return existing;
+      }
+
+      let s: any;
       if (typeof (chart as any).addLineSeries === 'function') {
-        return (chart as any).addLineSeries({
+        s = (chart as any).addLineSeries({
           color: isBroken ? `${color}60` : color,
           lineWidth: isBroken ? 1 : 2,
           lineStyle: isBroken ? LineStyle.Dotted : LineStyle.Dashed,
@@ -546,11 +631,16 @@ export function LightweightChart({
           priceLineVisible: false,
         });
       } else {
-        return (chart as any).addSeries({ type: 'Line' }, {
+        s = (chart as any).addSeries({ type: 'Line' }, {
           color: isBroken ? `${color}60` : color,
           lineWidth: isBroken ? 1 : 2,
         });
       }
+
+      const meta: SeriesWithChartId<ISeriesApi<'Line'>> = { series: s as ISeriesApi<'Line'>, chartId: currentChartId };
+      cageSeriesByKeyRef.current[key] = meta;
+      cageSeriesRefs.current.push(meta);
+      return meta;
     };
 
     const drawCageFromPoints = (
@@ -572,33 +662,33 @@ export function LightweightChart({
         return;
       }
       
+      if (chartRemovedRef.current) return;
+
       try {
-        const lowerSeries = createLineSeries(color, isBroken);
-        if (!lowerSeries) return; // Guard if chart was removed
-        
-        lowerSeries.setData([
+        const lowerMeta = getOrCreateCageSeries(`${cageLabel}-lower`, color, isBroken);
+        lowerMeta.series.setData([
           { time: toBusinessDay(lowerPoints[0].date) as Time, value: lowerPoints[0].value },
           { time: toBusinessDay(lowerPoints[1].date) as Time, value: lowerPoints[1].value },
         ]);
-        cageSeriesRefs.current.push(lowerSeries);
-        
-        const upperSeries = createLineSeries(color, isBroken);
-        if (!upperSeries) return; // Guard if chart was removed
-        
-        upperSeries.setData([
+
+        const upperMeta = getOrCreateCageSeries(`${cageLabel}-upper`, color, isBroken);
+        upperMeta.series.setData([
           { time: toBusinessDay(upperPoints[0].date) as Time, value: upperPoints[0].value },
           { time: toBusinessDay(upperPoints[1].date) as Time, value: upperPoints[1].value },
         ]);
-        cageSeriesRefs.current.push(upperSeries);
-        
+
         console.log(`[LightweightChart] Drew ${cageLabel} cage (broken: ${isBroken})`);
       } catch (e) {
         console.warn(`[LightweightChart] Failed to draw ${cageLabel} cage:`, e);
       }
     };
 
+    const expectedKeys = new Set<string>();
+
     // Draw cage_2_4
     if (cageFeatures.cage_2_4?.exists) {
+      expectedKeys.add('2-4-lower');
+      expectedKeys.add('2-4-upper');
       drawCageFromPoints(
         cageFeatures.cage_2_4.upper_points,
         cageFeatures.cage_2_4.lower_points,
@@ -611,6 +701,8 @@ export function LightweightChart({
     // Draw cage_ACB
     if (cageFeatures.cage_ACB?.exists) {
       const acbBroken = cageFeatures.cage_ACB.broken_up || cageFeatures.cage_ACB.broken_down || false;
+      expectedKeys.add('ACB-lower');
+      expectedKeys.add('ACB-upper');
       drawCageFromPoints(
         cageFeatures.cage_ACB.upper_points,
         cageFeatures.cage_ACB.lower_points,
@@ -622,6 +714,8 @@ export function LightweightChart({
 
     // Draw wedge_cage
     if (cageFeatures.wedge_cage?.exists) {
+      expectedKeys.add('Wedge-lower');
+      expectedKeys.add('Wedge-upper');
       drawCageFromPoints(
         cageFeatures.wedge_cage.upper_points,
         cageFeatures.wedge_cage.lower_points,
@@ -630,11 +724,23 @@ export function LightweightChart({
         'Wedge'
       );
     }
+
+    // Any previously-created cage series that is no longer relevant gets cleared (not removed)
+    Object.entries(cageSeriesByKeyRef.current).forEach(([key, meta]) => {
+      if (meta.chartId !== currentChartId) return;
+      if (!expectedKeys.has(key)) {
+        try {
+          meta.series.setData([]);
+        } catch {}
+      }
+    });
   }, [analysis?.cage_features, isReady, toggles.showCages]);
 
   // Add price lines for key levels
   useEffect(() => {
+    if (chartRemovedRef.current) return;
     if (!candleSeriesRef.current || !isReady) return;
+    if (candleSeriesChartIdRef.current !== currentChartIdRef.current) return;
 
     const series = candleSeriesRef.current;
 
