@@ -164,23 +164,32 @@ export default function Screener() {
                 retryAfterSeconds={retryAfterSeconds}
               />
               
+              {/* Auto TF Chip */}
+              {baseLayer && (
+                <Badge variant="outline" className="text-xs gap-1 bg-primary/10 border-primary/30">
+                  Auto TF: {formatTimeframe(baseLayer.timeframe)}
+                </Badge>
+              )}
+              
               {/* Degree Badge */}
               {baseLayer && (
                 <Badge variant="outline" className="text-xs gap-1">
                   <TrendingUp className="h-3 w-3" />
-                  {baseLayer.degree} • {formatTimeframe(baseLayer.timeframe)}
+                  {baseLayer.degree}
                 </Badge>
               )}
               
               {/* Invalidation Badge */}
               {baseLayer?.key_levels?.invalidation && (
                 <Badge variant="secondary" className="text-xs gap-1 bg-amber-500/20 text-amber-400 border-amber-500/30">
-                  INV: ${baseLayer.key_levels.invalidation.toFixed(2)}
+                  INV: ${typeof baseLayer.key_levels.invalidation === 'number' 
+                    ? baseLayer.key_levels.invalidation.toFixed(2)
+                    : baseLayer.key_levels.invalidation.level.toFixed(2)}
                 </Badge>
               )}
             </div>
             
-            <span className="text-xs text-muted-foreground">Auto Degree Mode</span>
+            <span className="text-xs text-muted-foreground">Auto Degree Selection</span>
           </div>
         </header>
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// ELLIOTT WAVE ANALYSIS TYPES (API v0.2)
+// ELLIOTT WAVE ANALYSIS TYPES (API v0.3)
 // ============================================================================
 
 export interface WavePoint {
@@ -26,11 +26,39 @@ export interface AlternateCount {
   waves?: WavePoint[]; // Optional wave points for chart overlay
 }
 
+// Enhanced KeyLevel with source/rule metadata
+export interface KeyLevelEntry {
+  level: number;
+  source: 'llm' | 'structure' | 'pivot-derived' | 'fibonacci';
+  label?: string;
+}
+
+export interface InvalidationEntry {
+  level: number;
+  rule: string;
+  source: 'llm' | 'structure' | 'hard-rule';
+}
+
 export interface KeyLevels {
-  support: number[];
-  resistance: number[];
+  support: (number | KeyLevelEntry)[];
+  resistance: (number | KeyLevelEntry)[];
   fibonacci_targets: number[];
-  invalidation: number;
+  invalidation: number | InvalidationEntry;
+}
+
+// Helper to normalize KeyLevelEntry
+export function normalizeKeyLevelEntry(entry: number | KeyLevelEntry): KeyLevelEntry {
+  if (typeof entry === 'number') {
+    return { level: entry, source: 'pivot-derived' };
+  }
+  return entry;
+}
+
+// Helper to get invalidation level
+export function getInvalidationLevel(inv: number | InvalidationEntry | undefined): number {
+  if (inv === undefined || inv === null) return 0;
+  if (typeof inv === 'number') return inv;
+  return inv.level;
 }
 
 // Line equation for cage drawing (y = slope * x + intercept, where x = candle index)
@@ -103,6 +131,8 @@ export interface CageFeatures {
     projected_to_date?: string;
     break_index?: number | null;
     break_date?: string | null;
+    break_price?: number | null;
+    boundary_value_at_break?: number | null;
   };
   cage_2_4_candidates?: CageCandidate[];
   cage_ACB: {
@@ -126,6 +156,8 @@ export interface CageFeatures {
     projected_to_date?: string;
     break_index?: number | null;
     break_date?: string | null;
+    break_price?: number | null;
+    boundary_value_at_break?: number | null;
   };
   wedge_cage: {
     exists: boolean;
@@ -148,6 +180,8 @@ export interface CageFeatures {
     projected_to_date?: string;
     break_index?: number | null;
     break_date?: string | null;
+    break_price?: number | null;
+    boundary_value_at_break?: number | null;
   };
 }
 
@@ -441,25 +475,190 @@ export const NEXT_LOWER_DEGREE: Record<WaveDegree, WaveDegree | null> = {
   'Minute': null,
 };
 
-// Wave label formatting by degree (WaveBasis-like)
-export function formatWaveLabelByDegree(waveNum: number | string, degree: WaveDegree): string {
+// ============================================================================
+// ENHANCED WAVE LABEL NORMALIZATION
+// ============================================================================
+
+export interface NormalizedWaveLabel {
+  raw: string;
+  degree: string | null;
+  degreeKey: WaveDegree | null;  // Strict type
+  waveNum: number | null;
+  waveABC: 'A' | 'B' | 'C' | null;
+  waveWXY: 'W' | 'X' | 'Y' | null;
+  isStart: boolean;              // True for "Start" or "0" wave
+  colorKey: string;
+  display: string;               // Legacy short display (e.g., "P2")
+  displayEw: string;             // Elliott Wave standard display (e.g., "(2)" for Primary)
+}
+
+const ROMAN_MAP: Record<string, number> = {
+  'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
+  'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5,
+};
+
+const ARABIC_TO_ROMAN: Record<number, string> = { 1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V' };
+const ARABIC_TO_LOWER_ROMAN: Record<number, string> = { 1: 'i', 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v' };
+
+// Standard Elliott Wave nomenclature by degree
+export function formatWaveLabelByDegree(waveNum: number | string, degree: WaveDegree, isCorrection = false): string {
   const num = typeof waveNum === 'string' ? waveNum : String(waveNum);
-  const romanNumerals: Record<string, string> = { '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V' };
-  const lowerRoman: Record<string, string> = { '1': 'i', '2': 'ii', '3': 'iii', '4': 'iv', '5': 'v' };
+  
+  // Handle ABC/WXY corrections
+  if (['A', 'B', 'C', 'W', 'X', 'Y', 'a', 'b', 'c', 'w', 'x', 'y'].includes(num)) {
+    const letter = num.toUpperCase();
+    switch (degree) {
+      case 'Supercycle':
+      case 'Cycle':
+        return letter; // A B C
+      case 'Primary':
+        return `(${letter})`; // (A)(B)(C)
+      case 'Intermediate':
+        return letter; // A B C
+      case 'Minor':
+        return letter.toLowerCase(); // a b c
+      case 'Minute':
+        return `(${letter.toLowerCase()})`; // (a)(b)(c)
+      default:
+        return letter;
+    }
+  }
+  
+  // Handle impulse waves 1-5
+  const numVal = parseInt(num, 10);
+  if (isNaN(numVal) || numVal < 1 || numVal > 5) return num;
   
   switch (degree) {
     case 'Supercycle':
+      return `(${ARABIC_TO_ROMAN[numVal]})`; // (I)(II)(III)(IV)(V)
     case 'Cycle':
-      return romanNumerals[num] || num; // I II III IV V
+      return ARABIC_TO_ROMAN[numVal] || num; // I II III IV V
     case 'Primary':
-      return `(${num})`; // (1)(2)(3)(4)(5)
-    case 'Intermediate':
       return num; // 1 2 3 4 5
+    case 'Intermediate':
+      return `(${num})`; // (1)(2)(3)(4)(5)
     case 'Minor':
-      return lowerRoman[num] || num.toLowerCase(); // i ii iii iv v
+      return ARABIC_TO_LOWER_ROMAN[numVal] || num; // i ii iii iv v
     case 'Minute':
-      return `(${lowerRoman[num] || num.toLowerCase()})`; // (i)(ii)(iii)(iv)(v)
+      return `(${ARABIC_TO_LOWER_ROMAN[numVal] || num})`; // (i)(ii)(iii)(iv)(v)
     default:
       return num;
   }
+}
+
+// Parse raw wave label (e.g., "Primary 2", "Supercycle III") into normalized structure
+export function normalizeWaveLabel(raw: string): NormalizedWaveLabel {
+  const result: NormalizedWaveLabel = {
+    raw,
+    degree: null,
+    degreeKey: null,
+    waveNum: null,
+    waveABC: null,
+    waveWXY: null,
+    isStart: false,
+    colorKey: 'X',
+    display: raw,
+    displayEw: raw,
+  };
+
+  const lower = raw.toLowerCase();
+  const upper = raw.toUpperCase();
+
+  // Check for Start/0 wave
+  if (lower.includes('start') || /\b0\b/.test(raw)) {
+    result.isStart = true;
+    result.colorKey = '0';
+  }
+
+  // Detect degree
+  const degreeKeywords: Array<{ key: WaveDegree; pattern: string }> = [
+    { key: 'Supercycle', pattern: 'supercycle' },
+    { key: 'Cycle', pattern: 'cycle' },
+    { key: 'Primary', pattern: 'primary' },
+    { key: 'Intermediate', pattern: 'intermediate' },
+    { key: 'Minor', pattern: 'minor' },
+    { key: 'Minute', pattern: 'minute' },
+  ];
+
+  for (const { key, pattern } of degreeKeywords) {
+    if (lower.includes(pattern)) {
+      result.degree = key;
+      result.degreeKey = key;
+      break;
+    }
+  }
+
+  // Detect wave number (arabic)
+  const arabicMatch = raw.match(/\b([1-5])\b/);
+  if (arabicMatch) {
+    result.waveNum = parseInt(arabicMatch[1], 10);
+    result.colorKey = arabicMatch[1];
+  }
+
+  // Detect wave number (roman numerals)
+  if (!result.waveNum) {
+    const romanMatch = raw.match(/\b(IV|III|II|I|V)\b/i);
+    if (romanMatch) {
+      const romanVal = ROMAN_MAP[romanMatch[1].toUpperCase()];
+      if (romanVal) {
+        result.waveNum = romanVal;
+        result.colorKey = String(romanVal);
+      }
+    }
+  }
+
+  // Detect ABC correction
+  const abcMatch = upper.match(/\b([ABC])\b|\(([ABC])\)/);
+  if (abcMatch) {
+    const letter = (abcMatch[1] || abcMatch[2]) as 'A' | 'B' | 'C';
+    result.waveABC = letter;
+    if (!result.waveNum) {
+      result.colorKey = letter;
+    }
+  }
+
+  // Detect WXY correction
+  const wxyMatch = upper.match(/\b([WXY])\b/);
+  if (wxyMatch && !result.waveNum && !result.waveABC) {
+    result.waveWXY = wxyMatch[1] as 'W' | 'X' | 'Y';
+    result.colorKey = wxyMatch[1];
+  }
+
+  // Build display strings
+  const abbrev = result.degreeKey ? DEGREE_ABBREV_MAP[result.degreeKey] : '';
+  
+  // Legacy display (e.g., "SC1", "P-A")
+  if (result.isStart) {
+    result.display = abbrev ? `${abbrev}0` : 'Start';
+  } else if (result.waveNum) {
+    result.display = abbrev ? `${abbrev}${result.waveNum}` : String(result.waveNum);
+  } else if (result.waveABC) {
+    result.display = abbrev ? `${abbrev}-${result.waveABC}` : result.waveABC;
+  } else if (result.waveWXY) {
+    result.display = abbrev ? `${abbrev}-${result.waveWXY}` : result.waveWXY;
+  }
+
+  // Elliott Wave standard display (using degree nomenclature)
+  if (result.degreeKey) {
+    if (result.isStart) {
+      result.displayEw = formatWaveLabelByDegree('0', result.degreeKey);
+    } else if (result.waveNum) {
+      result.displayEw = formatWaveLabelByDegree(result.waveNum, result.degreeKey);
+    } else if (result.waveABC) {
+      result.displayEw = formatWaveLabelByDegree(result.waveABC, result.degreeKey, true);
+    } else if (result.waveWXY) {
+      result.displayEw = formatWaveLabelByDegree(result.waveWXY, result.degreeKey, true);
+    }
+  } else {
+    // No degree detected, use raw number/letter
+    if (result.waveNum) {
+      result.displayEw = String(result.waveNum);
+    } else if (result.waveABC) {
+      result.displayEw = result.waveABC;
+    } else if (result.waveWXY) {
+      result.displayEw = result.waveWXY;
+    }
+  }
+
+  return result;
 }
